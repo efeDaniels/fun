@@ -1,4 +1,4 @@
-const { EMA, RSI, MACD } = require("technicalindicators");
+const { EMA, RSI, MACD, ADX } = require("technicalindicators");
 
 function calculateIndicators(candles) {
   const closes = candles.map((c) => c.close);
@@ -13,20 +13,27 @@ function calculateIndicators(candles) {
     signalPeriod: 9,
     SimpleMAOscillator: false,
   });
+  const adx = ADX.calculate({
+    close: closes,
+    high: candles.map((c) => c.high),
+    low: candles.map((c) => c.low),
+    period: 14,
+  });
 
-  return { ema50, ema200, rsi, macd };
+  return { ema50, ema200, rsi, macd, adx };
 }
 
 function generateTrendSignal(candles) {
-  const { ema50, ema200, rsi, macd } = calculateIndicators(candles);
+  const { ema50, ema200, rsi, macd, adx } = calculateIndicators(candles);
 
   const lastEMA50 = ema50[ema50.length - 1];
   const lastEMA200 = ema200[ema200.length - 1];
   const lastMACD = macd[macd.length - 1];
   const prevMACD = macd[macd.length - 2]; // Previous MACD for crossover check
   const lastRSI = rsi[rsi.length - 1];
+  const lastADX = adx[adx.length - 1]?.adx || 0; // ADX Strength Check
 
-  // ✅ More responsive crossover logic
+  // ✅ **Better Trend Confirmation**
   const emaCrossoverUp =
     lastEMA50 > lastEMA200 &&
     ema50[ema50.length - 2] < ema200[ema200.length - 2];
@@ -34,22 +41,36 @@ function generateTrendSignal(candles) {
     lastEMA50 < lastEMA200 &&
     ema50[ema50.length - 2] > ema200[ema200.length - 2];
 
-  // ✅ MACD crossover
+  // ✅ **Stronger MACD Crossovers**
   const macdCrossoverUp =
     lastMACD.MACD > lastMACD.signal && prevMACD.MACD < prevMACD.signal;
   const macdCrossoverDown =
     lastMACD.MACD < lastMACD.signal && prevMACD.MACD > prevMACD.signal;
+  const macdBearish = lastMACD.MACD < 0; // Ensure MACD is negative for shorts
 
-  // ✅ RSI tweaked thresholds (more frequent trades)
-  if ((emaCrossoverUp || macdCrossoverUp) && lastRSI > 40 && lastRSI < 65) {
+  // ✅ **ADX Trend Strength Filtering**
+  const strongTrend = lastADX > 20; // ADX > 20 means market is trending
+  const weakTrend = lastADX < 20; // ADX < 20 means market is choppy
+
+  // ✅ **BUY Conditions**
+  if (
+    (emaCrossoverUp || macdCrossoverUp) &&
+    lastRSI > 40 &&
+    lastRSI < 70 &&
+    strongTrend
+  ) {
     return "BUY";
-  } else if (
-    (emaCrossoverDown || macdCrossoverDown) &&
-    lastRSI < 60 &&
-    lastRSI > 35
+  }
+
+  // ✅ **SELL Conditions (Better Shorts)**
+  if (
+    (emaCrossoverDown || macdCrossoverDown || macdBearish) &&
+    lastRSI < 50 &&
+    strongTrend
   ) {
     return "SELL";
   }
+
   return "HOLD";
 }
 

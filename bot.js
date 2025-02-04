@@ -13,22 +13,27 @@ const exchangeInstance = new ccxt.bybit({
 });
 
 /**
- * Fetch USDT balance and return 5% as trade amount
+ * Fetch USDT balance and return 20% as trade amount
  */
 async function getTradeAmount() {
   try {
-    const balance = await exchangeInstance.fetchBalance();
-    const availableUSDT = balance?.USDT?.free || 0;
+      const balance = await exchangeInstance.fetchBalance();
+      let availableUSDT = balance?.USDT?.free || 0;
 
-    if (availableUSDT < 10) {
-      console.log("⚠️ Low balance, skipping trade.");
-      return 0;
-    }
+      if (availableUSDT < 10) {
+          console.log("⚠️ Low balance, skipping trade.");
+          return 0;
+      }
 
-    return availableUSDT * 0.20; // Use 20% of available balance
+      let tradeAmount = availableUSDT * 0.10; // Use 20% of available balance
+
+      if (tradeAmount < 7) tradeAmount = 7; // Ensure minimum trade amount is $7
+
+      console.log(`💰 Trade Amount: ${tradeAmount} USDT`);
+      return tradeAmount;
   } catch (err) {
-    console.error("❌ Error fetching balance:", err.message);
-    return 0;
+      console.error("❌ Error fetching balance:", err.message);
+      return 0;
   }
 }
 
@@ -43,8 +48,7 @@ async function getTradingPairs() {
     );
 
     console.log(`🔍 Found ${usdtPairs.length} USDT pairs.`);
-
-    return usdtPairs; // Return all USDT pairs
+    return usdtPairs;
   } catch (err) {
     console.error("❌ Error fetching trading pairs:", err.message);
     return [];
@@ -65,7 +69,6 @@ async function findBestTradingPair() {
   let bestScore = -Infinity;
 
   for (let pair of pairs.slice(0, 56)) {
-    // Scan top 56 pairs
     try {
       console.log(`🔍 Analyzing ${pair}...`);
 
@@ -76,7 +79,8 @@ async function findBestTradingPair() {
 
       console.log(`📊 ${pair} Volume: ${volume}, Spread: ${spread.toFixed(6)}`);
 
-      if (volume < 1_000_000) continue; // Ignore low-volume pairs
+      if (volume < 500_000) continue; // Lowered volume threshold to find more trades
+      if (spread > 0.5) continue; // Ignore pairs with high spread
 
       const candles = await fetchCandles(pair);
       if (!candles.length) continue;
@@ -88,8 +92,8 @@ async function findBestTradingPair() {
       let score = 0;
       if (signal === "BUY") score += 3;
       if (signal === "SELL") score -= 3;
-      if (spread < 0.2) score += 1;
-      if (volume > 10_000_000) score += 2;
+      if (spread < 0.1) score += 1;
+      if (volume > 5_000_000) score += 2;
 
       console.log(`📝 ${pair} Score: ${score}`);
 
@@ -137,6 +141,40 @@ async function fetchCandles(symbol) {
   }
 }
 
+async function monitorPositions() {
+  try {
+      console.log("🔍 Monitoring active positions...");
+
+      const positions = await exchangeInstance.fetchPositions();
+      const openPositions = positions.filter(pos => pos.contracts > 0);
+
+      console.log(`📊 Active Positions: ${openPositions.length}`);
+
+      if (openPositions.length >= 5) {
+          console.log("⚠️ Max positions reached (5). Monitoring existing trades...");
+          for (const position of openPositions) {
+              const entryPrice = parseFloat(position.entryPrice);
+              const currentPrice = (await exchangeInstance.fetchTicker(position.symbol)).last;
+              const pnlPercentage = ((currentPrice - entryPrice) / entryPrice) * 100;
+
+              console.log(`📈 ${position.symbol} PnL: ${pnlPercentage.toFixed(2)}%`);
+
+              if (pnlPercentage >= 10 || pnlPercentage <= -5) {
+                  console.log(`✅ Closing ${position.symbol} as PnL target reached`);
+                  await exchangeInstance.createOrder(
+                      position.symbol,
+                      "market",
+                      position.side === "long" ? "sell" : "buy",
+                      position.contracts
+                  );
+              }
+          }
+      }
+  } catch (err) {
+      console.error(`❌ Error monitoring positions: ${err.message}`);
+  }
+}
+
 /**
  * Main trading function that runs periodically
  */
@@ -144,34 +182,34 @@ async function startTrading() {
   console.log(`🚀 Starting Trading Bot... Scanning for the best pair...`);
 
   setInterval(async () => {
-    const bestPair = await findBestTradingPair();
-    if (!bestPair) {
-      console.log("⚠️ No suitable trading pair found. Retrying...");
-      return;
-    }
+      await monitorPositions(); // 🔍 Now this function exists, so no more errors
 
-    console.log(`✅ Best Pair: ${bestPair}`);
+      const bestPair = await findBestTradingPair();
+      if (!bestPair) {
+          console.log("⚠️ No suitable trading pair found. Retrying...");
+          return;
+      }
 
-    const tradeAmount = await getTradeAmount();
-    if (tradeAmount === 0) return;
+      console.log(`✅ Best Pair: ${bestPair}`);
 
-    const candles = await fetchCandles(bestPair);
-    const signal = generateTrendSignal(candles);
+      const tradeAmount = await getTradeAmount();
+      if (tradeAmount === 0) return;
 
-    if (signal === "BUY") {
-      console.log(`📢 BUY Signal for ${bestPair}`);
-      await executeTrade(bestPair, "buy", tradeAmount);
-    } else if (signal === "SELL") {
-      console.log(`📢 SELL Signal for ${bestPair}`);
-      await executeTrade(bestPair, "sell", tradeAmount);
-    } else {
-      console.log(`🔍 No trade signal for ${bestPair}`);
-    }
+      const candles = await fetchCandles(bestPair);
+      const signal = generateTrendSignal(candles);
 
-    if (tradeHistory.length % 10 === 0) {
-      calculatePnL();
-    }
-  }, 60000); // Runs every 1 minute
+      console.log(`📢 Trade Signal for ${bestPair}: ${signal}`);
+
+      if (signal === "BUY") {
+          console.log(`📢 BUY Signal for ${bestPair}`);
+          await executeTrade(bestPair, "buy", tradeAmount);
+      } else if (signal === "SELL") {
+          console.log(`📢 SELL Signal for ${bestPair}`);
+          await executeTrade(bestPair, "sell", tradeAmount);
+      } else {
+          console.log(`🔍 No trade signal for ${bestPair}`);
+      }
+  }, 60000);
 }
 
 startTrading();

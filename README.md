@@ -18,7 +18,7 @@ A fully automated **Bybit Futures Trading Bot** that scans the market for the be
 
 ### 1- Clone the Repository
 ```bash
-  git clone https://github.com/yourusername/trading-bot.git
+  git clone https://github.com/efeDaniels/fun.git
   cd trading-bot
 ```
 

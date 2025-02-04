@@ -1,7 +1,11 @@
 const ccxt = require("ccxt");
 const { generateTrendSignal } = require("./trendStrategy");
 const { analyzeOrderFlow } = require("./orderFlow");
-const { executeTrade, tradeHistory } = require("./tradeExecutor");
+const {
+  executeTrade,
+  tradeHistory,
+  monitorPositions,
+} = require("./tradeExecutor");
 const { calculatePnL } = require("./calculatePnL");
 require("dotenv").config();
 
@@ -13,27 +17,24 @@ const exchangeInstance = new ccxt.bybit({
 });
 
 /**
- * Fetch USDT balance and return 20% as trade amount
+ * Fetch USDT balance and return fixed trade amount
  */
 async function getTradeAmount() {
   try {
-      const balance = await exchangeInstance.fetchBalance();
-      let availableUSDT = balance?.USDT?.free || 0;
+    const balance = await exchangeInstance.fetchBalance();
+    let availableUSDT = balance?.USDT?.free || 0;
 
-      if (availableUSDT < 10) {
-          console.log("⚠️ Low balance, skipping trade.");
-          return 0;
-      }
-
-      let tradeAmount = availableUSDT * 0.10; // Use 20% of available balance
-
-      if (tradeAmount < 7) tradeAmount = 7; // Ensure minimum trade amount is $7
-
-      console.log(`💰 Trade Amount: ${tradeAmount} USDT`);
-      return tradeAmount;
-  } catch (err) {
-      console.error("❌ Error fetching balance:", err.message);
+    if (availableUSDT < 10) {
+      console.log("⚠️ Low balance, skipping trade.");
       return 0;
+    }
+
+    let tradeAmount = 10; // Fixed $10 trade amount
+    console.log(`💰 Trade Amount: ${tradeAmount} USDT`);
+    return tradeAmount;
+  } catch (err) {
+    console.error("❌ Error fetching balance:", err.message);
+    return 0;
   }
 }
 
@@ -79,8 +80,8 @@ async function findBestTradingPair() {
 
       console.log(`📊 ${pair} Volume: ${volume}, Spread: ${spread.toFixed(6)}`);
 
-      if (volume < 500_000) continue; // Lowered volume threshold to find more trades
-      if (spread > 0.5) continue; // Ignore pairs with high spread
+      if (volume < 500_000) continue;
+      if (spread > 0.5) continue;
 
       const candles = await fetchCandles(pair);
       if (!candles.length) continue;
@@ -88,7 +89,6 @@ async function findBestTradingPair() {
       const signal = generateTrendSignal(candles);
       if (!signal) continue;
 
-      // Scoring system
       let score = 0;
       if (signal === "BUY") score += 3;
       if (signal === "SELL") score -= 3;
@@ -112,7 +112,7 @@ async function findBestTradingPair() {
     console.log(
       "⚠️ No pair met the criteria. Selecting the highest-volume pair..."
     );
-    bestPair = pairs[0]; // Fallback to first pair
+    bestPair = pairs[0];
   }
 
   return bestPair;
@@ -141,40 +141,6 @@ async function fetchCandles(symbol) {
   }
 }
 
-async function monitorPositions() {
-  try {
-      console.log("🔍 Monitoring active positions...");
-
-      const positions = await exchangeInstance.fetchPositions();
-      const openPositions = positions.filter(pos => pos.contracts > 0);
-
-      console.log(`📊 Active Positions: ${openPositions.length}`);
-
-      if (openPositions.length >= 5) {
-          console.log("⚠️ Max positions reached (5). Monitoring existing trades...");
-          for (const position of openPositions) {
-              const entryPrice = parseFloat(position.entryPrice);
-              const currentPrice = (await exchangeInstance.fetchTicker(position.symbol)).last;
-              const pnlPercentage = ((currentPrice - entryPrice) / entryPrice) * 100;
-
-              console.log(`📈 ${position.symbol} PnL: ${pnlPercentage.toFixed(2)}%`);
-
-              if (pnlPercentage >= 10 || pnlPercentage <= -5) {
-                  console.log(`✅ Closing ${position.symbol} as PnL target reached`);
-                  await exchangeInstance.createOrder(
-                      position.symbol,
-                      "market",
-                      position.side === "long" ? "sell" : "buy",
-                      position.contracts
-                  );
-              }
-          }
-      }
-  } catch (err) {
-      console.error(`❌ Error monitoring positions: ${err.message}`);
-  }
-}
-
 /**
  * Main trading function that runs periodically
  */
@@ -182,33 +148,33 @@ async function startTrading() {
   console.log(`🚀 Starting Trading Bot... Scanning for the best pair...`);
 
   setInterval(async () => {
-      await monitorPositions(); // 🔍 Now this function exists, so no more errors
+    await monitorPositions(); // ✅ Calls `monitorPositions()` from `tradeExecutor.js`
 
-      const bestPair = await findBestTradingPair();
-      if (!bestPair) {
-          console.log("⚠️ No suitable trading pair found. Retrying...");
-          return;
-      }
+    const bestPair = await findBestTradingPair();
+    if (!bestPair) {
+      console.log("⚠️ No suitable trading pair found. Retrying...");
+      return;
+    }
 
-      console.log(`✅ Best Pair: ${bestPair}`);
+    console.log(`✅ Best Pair: ${bestPair}`);
 
-      const tradeAmount = await getTradeAmount();
-      if (tradeAmount === 0) return;
+    const tradeAmount = await getTradeAmount();
+    if (tradeAmount === 0) return;
 
-      const candles = await fetchCandles(bestPair);
-      const signal = generateTrendSignal(candles);
+    const candles = await fetchCandles(bestPair);
+    const signal = generateTrendSignal(candles);
 
-      console.log(`📢 Trade Signal for ${bestPair}: ${signal}`);
+    console.log(`📢 Trade Signal for ${bestPair}: ${signal}`);
 
-      if (signal === "BUY") {
-          console.log(`📢 BUY Signal for ${bestPair}`);
-          await executeTrade(bestPair, "buy", tradeAmount);
-      } else if (signal === "SELL") {
-          console.log(`📢 SELL Signal for ${bestPair}`);
-          await executeTrade(bestPair, "sell", tradeAmount);
-      } else {
-          console.log(`🔍 No trade signal for ${bestPair}`);
-      }
+    if (signal === "BUY") {
+      console.log(`📢 BUY Signal for ${bestPair}`);
+      await executeTrade(bestPair, "buy", tradeAmount); // ✅ Now includes trade amount
+    } else if (signal === "SELL") {
+      console.log(`📢 SELL Signal for ${bestPair}`);
+      await executeTrade(bestPair, "sell", tradeAmount); // ✅ Now includes trade amount
+    } else {
+      console.log(`🔍 No trade signal for ${bestPair}`);
+    }
   }, 60000);
 }
 

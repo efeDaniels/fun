@@ -23,125 +23,157 @@ const activePairs = new Map(); // Track active trading pairs and their trade cou
  * Set leverage for a symbol (handles leverage modification error)
  */
 async function setLeverage(symbol, leverage = DEFAULT_LEVERAGE) {
-    try {
-        await exchangeInstance.setLeverage(leverage, symbol);
-        console.log(`✅ Leverage set to ${leverage}x for ${symbol}`);
-    } catch (err) {
-        if (err.message.includes("leverage not modified")) {
-            console.warn(`⚠️ Leverage for ${symbol} is already set to ${leverage}x.`);
-        } else {
-            console.error(`❌ Error setting leverage: ${err.message}`);
-        }
+  try {
+    await exchangeInstance.setLeverage(leverage, symbol);
+    console.log(`✅ Leverage set to ${leverage}x for ${symbol}`);
+  } catch (err) {
+    if (err.message.includes("leverage not modified")) {
+      console.warn(`⚠️ Leverage for ${symbol} is already set to ${leverage}x.`);
+    } else {
+      console.error(`❌ Error setting leverage: ${err.message}`);
     }
+  }
 }
 
 /**
  * Fetch open positions
  */
 async function getOpenPositions() {
-    try {
-        const positions = await exchangeInstance.fetchPositions();
-        return positions.filter(pos => parseFloat(pos.contracts) > 0); // Only active positions
-    } catch (err) {
-        console.error(`❌ Error fetching positions: ${err.message}`);
-        return [];
-    }
+  try {
+    const positions = await exchangeInstance.fetchPositions();
+    return positions.filter((pos) => parseFloat(pos.contracts) > 0); // Only active positions
+  } catch (err) {
+    console.error(`❌ Error fetching positions: ${err.message}`);
+    return [];
+  }
 }
 
-/**
- * Monitor open positions and log PnL updates
- */
+// * Monitor open positions and close them if Unrealized PnL target is hit.
+
 async function monitorPositions() {
-    try {
-        const openPositions = await getOpenPositions();
-        if (openPositions.length === 0) {
-            console.log("🔍 No open positions.");
-            activePairs.clear(); // Reset active pairs when no positions are left
-            return;
-        }
+   try {
+       console.log("🔍 Monitoring active positions...");
 
-        console.log(`📊 Monitoring ${openPositions.length} open positions:`);
-        for (const position of openPositions) {
-            const entryPrice = parseFloat(position.entryPrice);
-            const currentPrice = (await exchangeInstance.fetchTicker(position.symbol)).last;
-            const pnlPercentage = ((currentPrice - entryPrice) / entryPrice) * 100;
+       const positions = await exchangeInstance.fetchPositions();
+       const openPositions = positions.filter(pos => parseFloat(pos.contracts) > 0);
 
-            console.log(`🔹 ${position.symbol}: Entry ${entryPrice}, Current ${currentPrice}, PnL: ${pnlPercentage.toFixed(2)}%`);
+       console.log(`📊 Active Positions: ${openPositions.length}`);
 
-            // Stop loss at -5%
-            if (pnlPercentage <= -5) {
-                console.log(`❌ STOP LOSS: Closing ${position.symbol} at -5% loss`);
-                await exchangeInstance.createOrder(position.symbol, "market", position.side === "buy" ? "sell" : "buy", position.contracts);
-                activePairs.delete(position.symbol); // Remove from active tracking
-            }
-            // Take profit at +5%
-            if (pnlPercentage >= 5) {
-                console.log(`✅ TAKE PROFIT: Closing ${position.symbol} at +5% profit`);
-                await exchangeInstance.createOrder(position.symbol, "market", position.side === "buy" ? "sell" : "buy", position.contracts);
-                activePairs.delete(position.symbol); // Remove from active tracking
-            }
-        }
-    } catch (err) {
-        console.error(`❌ Error monitoring positions: ${err.message}`);
-    }
+       for (const position of openPositions) {
+           const entryPrice = parseFloat(position.entryPrice);
+           const markPrice = parseFloat(position.markPrice);
+           const unrealizedPnL = parseFloat(position.unrealizedPnl);
+           const contracts = parseFloat(position.contracts);
+           const leverage = parseFloat(position.leverage);
+
+           // ✅ Properly format symbol for Bybit API
+           const formattedSymbol = position.symbol.replace("/", "").replace(":USDT", "");
+
+           // Calculate Initial Margin for correct PnL %
+           const marginUsed = (entryPrice * contracts) / leverage;
+           const pnlPercentage = (unrealizedPnL / marginUsed) * 100;
+
+           console.log(`🔹 ${position.symbol}: Entry ${entryPrice}, Mark ${markPrice}, Unrealized PnL: ${unrealizedPnL.toFixed(4)} USDT (${pnlPercentage.toFixed(2)}%)`);
+
+           // Close when reaching PnL target
+           if (pnlPercentage >= 5 || pnlPercentage <= -5) {
+               console.log(`✅ Closing ${position.symbol} as Unrealized PnL target reached`);
+
+               try {
+                   // ✅ Close position using a Market Reduce-Only Order
+                   await exchangeInstance.createOrder(
+                       formattedSymbol,
+                       "market",
+                       position.side === "long" ? "sell" : "buy", // Flip side to close
+                       contracts,
+                       undefined,
+                       { reduceOnly: true } // Ensure it's a close order
+                   );
+
+                   console.log(`✅ Successfully closed ${position.symbol}`);
+               } catch (closeError) {
+                   console.error(`❌ Error closing ${position.symbol}:`, closeError.message);
+               }
+           }
+       }
+   } catch (err) {
+       console.error(`❌ Error monitoring positions: ${err.message}`);
+   }
 }
 
 /**
  * Execute trade (ensures fixed $10 per trade & prevents multiple trades per pair)
  */
 async function executeTrade(symbol, side) {
-    try {
-        console.log(`🛒 Attempting ${side.toUpperCase()} trade for ${symbol} with $${FIXED_TRADE_AMOUNT} margin`);
+  try {
+    console.log(
+      `🛒 Attempting ${side.toUpperCase()} trade for ${symbol} with $${FIXED_TRADE_AMOUNT} margin`
+    );
 
-        // Fetch active positions
-        const openPositions = await getOpenPositions();
+    // Fetch active positions
+    const openPositions = await getOpenPositions();
 
-        // Enforce max open positions
-        if (openPositions.length >= MAX_OPEN_POSITIONS) {
-            console.log("⚠️ Max positions reached (5). Monitoring existing trades...");
-            return;
-        }
-
-        // Prevent multiple trades on the same pair
-        const currentTrades = activePairs.get(symbol) || 0;
-        if (currentTrades >= MAX_TRADES_PER_PAIR) {
-            console.log(`⚠️ Skipping trade. Max trades (${MAX_TRADES_PER_PAIR}) reached for ${symbol}.`);
-            return;
-        }
-
-        // Fetch market price
-        const ticker = await exchangeInstance.fetchTicker(symbol);
-        const price = ticker.last || ticker.close;
-
-        if (!price || price <= 0) {
-            console.log(`❌ Invalid market price for ${symbol}. Skipping trade.`);
-            return;
-        }
-
-        // Set leverage
-        await setLeverage(symbol, DEFAULT_LEVERAGE);
-
-        // Calculate total position size
-        let totalPositionSize = FIXED_TRADE_AMOUNT * DEFAULT_LEVERAGE; // Ex: $10 margin * 5x = $50 position
-        let amount = totalPositionSize / price;
-
-        // Ensure amount meets exchange minimum
-        const market = exchangeInstance.market(symbol);
-        const minTradeSize = market.limits.amount.min || 1;
-        if (amount < minTradeSize) {
-            console.log(`⚠️ Trade amount too low. Adjusting to minimum required (${minTradeSize})`);
-            amount = minTradeSize;
-        }
-
-        // Execute market order
-        const order = await exchangeInstance.createOrder(symbol, "market", side, amount);
-        console.log(`✅ Trade executed: ${order.id} - ${side.toUpperCase()} ${amount} of ${symbol}`);
-
-        tradeHistory.push(order);
-        activePairs.set(symbol, currentTrades + 1); // Increment trade count for this pair
-    } catch (err) {
-        console.error(`❌ Error executing trade: ${err.message}`);
+    // Enforce max open positions
+    if (openPositions.length >= MAX_OPEN_POSITIONS) {
+      console.log(
+        "⚠️ Max positions reached (5). Monitoring existing trades..."
+      );
+      return;
     }
+
+    // Prevent multiple trades on the same pair
+    const currentTrades = activePairs.get(symbol) || 0;
+    if (currentTrades >= MAX_TRADES_PER_PAIR) {
+      console.log(
+        `⚠️ Skipping trade. Max trades (${MAX_TRADES_PER_PAIR}) reached for ${symbol}.`
+      );
+      return;
+    }
+
+    // Fetch market price
+    const ticker = await exchangeInstance.fetchTicker(symbol);
+    const price = ticker.last || ticker.close;
+
+    if (!price || price <= 0) {
+      console.log(`❌ Invalid market price for ${symbol}. Skipping trade.`);
+      return;
+    }
+
+    // Set leverage
+    await setLeverage(symbol, DEFAULT_LEVERAGE);
+
+    // Calculate total position size
+    let totalPositionSize = FIXED_TRADE_AMOUNT * DEFAULT_LEVERAGE; // Ex: $10 margin * 5x = $50 position
+    let amount = totalPositionSize / price;
+
+    // Ensure amount meets exchange minimum
+    const market = exchangeInstance.market(symbol);
+    const minTradeSize = market.limits.amount.min || 1;
+    if (amount < minTradeSize) {
+      console.log(
+        `⚠️ Trade amount too low. Adjusting to minimum required (${minTradeSize})`
+      );
+      amount = minTradeSize;
+    }
+
+    // Execute market order
+    const order = await exchangeInstance.createOrder(
+      symbol,
+      "market",
+      side,
+      amount
+    );
+    console.log(
+      `✅ Trade executed: ${
+        order.id
+      } - ${side.toUpperCase()} ${amount} of ${symbol}`
+    );
+
+    tradeHistory.push(order);
+    activePairs.set(symbol, currentTrades + 1); // Increment trade count for this pair
+  } catch (err) {
+    console.error(`❌ Error executing trade: ${err.message}`);
+  }
 }
 
 module.exports = { executeTrade, tradeHistory, monitorPositions };

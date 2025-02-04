@@ -9,21 +9,26 @@ const exchangeInstance = new ccxt.bybit({
   options: { defaultType: "swap" }, // Ensure we use derivatives (if applicable)
 });
 
-// Keep a history of trades in memory
-const tradeHistory = [];
+// Bot Parameters
+const FIXED_TRADE_AMOUNT = 10; // Always trade exactly $10 per position
+const DEFAULT_LEVERAGE = 5; // Set default leverage
 const MAX_OPEN_POSITIONS = 5; // Limit total open positions
-const MAX_TRADES_PER_PAIR = 1; // Limit trades per pair
+const MAX_TRADES_PER_PAIR = 1; // Limit max trades per pair
+
+// Track trade history
+const tradeHistory = [];
+const activePairs = new Map(); // Track active trading pairs and their trade counts
 
 /**
- * Set leverage for a symbol (ignores "leverage not modified" error)
+ * Set leverage for a symbol (handles leverage modification error)
  */
-async function setLeverage(symbol, leverage = 5) {
+async function setLeverage(symbol, leverage = DEFAULT_LEVERAGE) {
     try {
         await exchangeInstance.setLeverage(leverage, symbol);
         console.log(`✅ Leverage set to ${leverage}x for ${symbol}`);
     } catch (err) {
         if (err.message.includes("leverage not modified")) {
-            console.warn(`⚠️ Leverage for ${symbol} is already set to ${leverage}x. Skipping change.`);
+            console.warn(`⚠️ Leverage for ${symbol} is already set to ${leverage}x.`);
         } else {
             console.error(`❌ Error setting leverage: ${err.message}`);
         }
@@ -36,7 +41,7 @@ async function setLeverage(symbol, leverage = 5) {
 async function getOpenPositions() {
     try {
         const positions = await exchangeInstance.fetchPositions();
-        return positions.filter(pos => parseFloat(pos.contracts) > 0); // Return only active positions
+        return positions.filter(pos => parseFloat(pos.contracts) > 0); // Only active positions
     } catch (err) {
         console.error(`❌ Error fetching positions: ${err.message}`);
         return [];
@@ -51,6 +56,7 @@ async function monitorPositions() {
         const openPositions = await getOpenPositions();
         if (openPositions.length === 0) {
             console.log("🔍 No open positions.");
+            activePairs.clear(); // Reset active pairs when no positions are left
             return;
         }
 
@@ -62,10 +68,17 @@ async function monitorPositions() {
 
             console.log(`🔹 ${position.symbol}: Entry ${entryPrice}, Current ${currentPrice}, PnL: ${pnlPercentage.toFixed(2)}%`);
 
-            // Auto-close trades if profit/loss target is hit (5% profit, -5% loss)
-            if (pnlPercentage >= 5 || pnlPercentage <= -5) {
-                console.log(`✅ Closing ${position.symbol} as PnL target reached`);
+            // Stop loss at -5%
+            if (pnlPercentage <= -5) {
+                console.log(`❌ STOP LOSS: Closing ${position.symbol} at -5% loss`);
                 await exchangeInstance.createOrder(position.symbol, "market", position.side === "buy" ? "sell" : "buy", position.contracts);
+                activePairs.delete(position.symbol); // Remove from active tracking
+            }
+            // Take profit at +5%
+            if (pnlPercentage >= 5) {
+                console.log(`✅ TAKE PROFIT: Closing ${position.symbol} at +5% profit`);
+                await exchangeInstance.createOrder(position.symbol, "market", position.side === "buy" ? "sell" : "buy", position.contracts);
+                activePairs.delete(position.symbol); // Remove from active tracking
             }
         }
     } catch (err) {
@@ -74,32 +87,30 @@ async function monitorPositions() {
 }
 
 /**
- * Execute trade (Prevents multiple trades on the same pair)
+ * Execute trade (ensures fixed $10 per trade & prevents multiple trades per pair)
  */
-async function executeTrade(symbol, side, usdtAmount = 10) {
+async function executeTrade(symbol, side) {
     try {
-        console.log(`🛒 Attempting ${side.toUpperCase()} trade for ${symbol} with ${usdtAmount} USDT`);
+        console.log(`🛒 Attempting ${side.toUpperCase()} trade for ${symbol} with $${FIXED_TRADE_AMOUNT} margin`);
 
-        // Check open positions
-        const positions = await getOpenPositions();
-        const openPositions = positions.filter(pos => pos.contracts > 0);
+        // Fetch active positions
+        const openPositions = await getOpenPositions();
 
-        // Limit total positions to 5
+        // Enforce max open positions
         if (openPositions.length >= MAX_OPEN_POSITIONS) {
             console.log("⚠️ Max positions reached (5). Monitoring existing trades...");
             return;
         }
 
-        // Check if we already have an open position for this pair
-        const existingPosition = openPositions.find(pos => pos.symbol === symbol);
-        if (existingPosition) {
-            console.log(`⚠️ Skipping trade for ${symbol}, already have an open position.`);
-            return; // Skip if a trade is already open for this pair
+        // Prevent multiple trades on the same pair
+        const currentTrades = activePairs.get(symbol) || 0;
+        if (currentTrades >= MAX_TRADES_PER_PAIR) {
+            console.log(`⚠️ Skipping trade. Max trades (${MAX_TRADES_PER_PAIR}) reached for ${symbol}.`);
+            return;
         }
 
-        // Fetch market details to get price and contract size
+        // Fetch market price
         const ticker = await exchangeInstance.fetchTicker(symbol);
-        const market = exchangeInstance.market(symbol);
         const price = ticker.last || ticker.close;
 
         if (!price || price <= 0) {
@@ -107,24 +118,27 @@ async function executeTrade(symbol, side, usdtAmount = 10) {
             return;
         }
 
-        // Ensure leverage is set
-        await setLeverage(symbol, 5);
+        // Set leverage
+        await setLeverage(symbol, DEFAULT_LEVERAGE);
 
-        // Calculate the amount to trade (USDT divided by price)
-        let amount = usdtAmount / price;
+        // Calculate total position size
+        let totalPositionSize = FIXED_TRADE_AMOUNT * DEFAULT_LEVERAGE; // Ex: $10 margin * 5x = $50 position
+        let amount = totalPositionSize / price;
 
-        // Ensure amount meets the exchange minimum
+        // Ensure amount meets exchange minimum
+        const market = exchangeInstance.market(symbol);
         const minTradeSize = market.limits.amount.min || 1;
         if (amount < minTradeSize) {
             console.log(`⚠️ Trade amount too low. Adjusting to minimum required (${minTradeSize})`);
             amount = minTradeSize;
         }
 
-        // Place the trade
+        // Execute market order
         const order = await exchangeInstance.createOrder(symbol, "market", side, amount);
         console.log(`✅ Trade executed: ${order.id} - ${side.toUpperCase()} ${amount} of ${symbol}`);
 
         tradeHistory.push(order);
+        activePairs.set(symbol, currentTrades + 1); // Increment trade count for this pair
     } catch (err) {
         console.error(`❌ Error executing trade: ${err.message}`);
     }

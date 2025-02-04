@@ -51,54 +51,72 @@ async function getOpenPositions() {
 // * Monitor open positions and close them if Unrealized PnL target is hit.
 
 async function monitorPositions() {
-   try {
-       console.log("🔍 Monitoring active positions...");
+  try {
+    console.log("🔍 Monitoring active positions...");
 
-       const positions = await exchangeInstance.fetchPositions();
-       const openPositions = positions.filter(pos => parseFloat(pos.contracts) > 0);
+    const positions = await exchangeInstance.fetchPositions();
+    const openPositions = positions.filter(
+      (pos) => parseFloat(pos.contracts) > 0
+    );
 
-       console.log(`📊 Active Positions: ${openPositions.length}`);
+    console.log(`📊 Active Positions: ${openPositions.length}`);
 
-       for (const position of openPositions) {
-           const entryPrice = parseFloat(position.entryPrice);
-           const markPrice = parseFloat(position.markPrice);
-           const unrealizedPnL = parseFloat(position.unrealizedPnl);
-           const contracts = parseFloat(position.contracts);
-           const leverage = parseFloat(position.leverage);
+    for (const position of openPositions) {
+      const entryPrice = parseFloat(position.entryPrice);
+      const markPrice = parseFloat(position.markPrice);
+      const unrealizedPnL = parseFloat(position.unrealizedPnl);
+      const contracts = parseFloat(position.contracts);
+      const leverage = parseFloat(position.leverage);
 
-           // ✅ Properly format symbol for Bybit API
-           const formattedSymbol = position.symbol.replace("/", "").replace(":USDT", "");
+      // ✅ Properly format symbol for Bybit API
+      const formattedSymbol = position.symbol
+        .replace("/", "")
+        .replace(":USDT", "");
 
-           // Calculate Initial Margin for correct PnL %
-           const marginUsed = (entryPrice * contracts) / leverage;
-           const pnlPercentage = (unrealizedPnL / marginUsed) * 100;
+      // ✅ Correct PnL Calculation (Using Margin)
+      const marginUsed = (entryPrice * contracts) / leverage;
+      const pnlPercentage = (unrealizedPnL / marginUsed) * 100;
 
-           console.log(`🔹 ${position.symbol}: Entry ${entryPrice}, Mark ${markPrice}, Unrealized PnL: ${unrealizedPnL.toFixed(4)} USDT (${pnlPercentage.toFixed(2)}%)`);
+      console.log(
+        `🔹 ${
+          position.symbol
+        }: Entry ${entryPrice}, Mark ${markPrice}, Unrealized PnL: ${unrealizedPnL.toFixed(
+          4
+        )} USDT (${pnlPercentage.toFixed(2)}%)`
+      );
 
-           // Close when reaching PnL target
-           if (pnlPercentage >= 15 || pnlPercentage <= -15) {
-               console.log(`✅ Closing ${position.symbol} as Unrealized PnL target reached`);
+      // 🚀 Close when reaching PnL target
+      if (pnlPercentage >= 15 || pnlPercentage <= -15) {
+        console.log(
+          `✅✅ Closing ${position.symbol} as Unrealized PnL target reached ✅ ✅ `
+        );
 
-               try {
-                   // ✅ Close position using a Market Reduce-Only Order
-                   await exchangeInstance.createOrder(
-                       formattedSymbol,
-                       "market",
-                       position.side === "long" ? "sell" : "buy", // Flip side to close
-                       contracts,
-                       undefined,
-                       { reduceOnly: true } // Ensure it's a close order
-                   );
+        try {
+          await exchangeInstance.createOrder(
+            formattedSymbol,
+            "market",
+            position.side === "long" ? "sell" : "buy", // Flip side to close
+            contracts,
+            undefined,
+            { reduceOnly: true } // Ensure it's a close order
+          );
 
-                   console.log(`✅ Successfully closed ${position.symbol}`);
-               } catch (closeError) {
-                   console.error(`❌ Error closing ${position.symbol}:`, closeError.message);
-               }
-           }
-       }
-   } catch (err) {
-       console.error(`❌ Error monitoring positions: ${err.message}`);
-   }
+          console.log(`✅ Successfully closed ${position.symbol}`);
+        } catch (closeError) {
+          console.error(
+            `❌ Error closing ${position.symbol}:`,
+            closeError.message
+          );
+        }
+      }
+    }
+    // ✅ Stop scanning for new trades if max positions are open
+    if (openPositions.length >= 5) {
+      console.log("⚠️ Max positions reached! Prioritizing PnL monitoring.");
+    }
+  } catch (err) {
+    console.error(`❌ Error monitoring positions: ${err.message}`);
+  }
 }
 
 /**
@@ -176,4 +194,4 @@ async function executeTrade(symbol, side) {
   }
 }
 
-module.exports = { executeTrade, tradeHistory, monitorPositions };
+module.exports = { executeTrade, tradeHistory, monitorPositions, getOpenPositions };

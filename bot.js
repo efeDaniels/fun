@@ -1,11 +1,7 @@
 const ccxt = require("ccxt");
 const { generateTrendSignal } = require("./trendStrategy");
 const { analyzeOrderFlow } = require("./orderFlow");
-const {
-  executeTrade,
-  tradeHistory,
-  monitorPositions,
-} = require("./tradeExecutor");
+const { executeTrade, monitorPositions } = require("./tradeExecutor");
 const { calculatePnL } = require("./calculatePnL");
 require("dotenv").config();
 
@@ -16,26 +12,14 @@ const exchangeInstance = new ccxt.bybit({
   enableRateLimit: true,
 });
 
+const PAIR_BATCH_SIZE = 100; // Optimize by scanning top 100 pairs at a time
+const MAX_PAIRS_TO_ANALYZE = 300; // Limit total analysis to avoid rate limiting
+
 /**
  * Fetch USDT balance and return fixed trade amount
  */
 async function getTradeAmount() {
-  try {
-    const balance = await exchangeInstance.fetchBalance();
-    let availableUSDT = balance?.USDT?.free || 0;
-
-    if (availableUSDT < 10) {
-      console.log("⚠️ Low balance, skipping trade.");
-      return 0;
-    }
-
-    let tradeAmount = 10; // Fixed $10 trade amount
-    console.log(`💰 Trade Amount: ${tradeAmount} USDT`);
-    return tradeAmount;
-  } catch (err) {
-    console.error("❌ Error fetching balance:", err.message);
-    return 0;
-  }
+  return 10; // Fixed trade amount of $10
 }
 
 /**
@@ -44,12 +28,7 @@ async function getTradeAmount() {
 async function getTradingPairs() {
   try {
     const markets = await exchangeInstance.loadMarkets();
-    const usdtPairs = Object.keys(markets).filter((pair) =>
-      pair.endsWith("/USDT:USDT")
-    );
-
-    console.log(`🔍 Found ${usdtPairs.length} USDT pairs.`);
-    return usdtPairs;
+    return Object.keys(markets).filter((pair) => pair.endsWith("/USDT:USDT"));
   } catch (err) {
     console.error("❌ Error fetching trading pairs:", err.message);
     return [];
@@ -57,62 +36,64 @@ async function getTradingPairs() {
 }
 
 /**
- * Find the best trading pair based on volume, spread, and trend signal
+ * Find the best trading pair based on volume, spread, trend signal, and order flow
  */
 async function findBestTradingPair() {
   const pairs = await getTradingPairs();
-  if (pairs.length === 0) {
-    console.log("❌ No trading pairs found. Exiting...");
-    return null;
-  }
+  if (pairs.length === 0) return null;
 
   let bestPair = null;
   let bestScore = -Infinity;
 
-  for (let pair of pairs.slice(0, 56)) {
-    try {
-      console.log(`🔍 Analyzing ${pair}...`);
+  for (
+    let i = 0;
+    i < Math.min(pairs.length, MAX_PAIRS_TO_ANALYZE);
+    i += PAIR_BATCH_SIZE
+  ) {
+    const batch = pairs.slice(i, i + PAIR_BATCH_SIZE);
+    console.log(`🔍 Analyzing batch ${i / PAIR_BATCH_SIZE + 1}...`);
 
-      // Fetch ticker data
-      const ticker = await exchangeInstance.fetchTicker(pair);
-      const volume = ticker.quoteVolume || ticker.baseVolume || 0;
-      const spread = ticker.ask - ticker.bid;
+    for (const pair of batch) {
+      try {
+        console.log(`🔍 Analyzing ${pair}...`);
+        const ticker = await exchangeInstance.fetchTicker(pair);
+        if (!ticker || !ticker.last) continue;
 
-      console.log(`📊 ${pair} Volume: ${volume}, Spread: ${spread.toFixed(6)}`);
+        const volume = ticker.quoteVolume || ticker.baseVolume || 0;
+        const spread = ticker.ask - ticker.bid;
 
-      if (volume < 500_000) continue;
-      if (spread > 0.5) continue;
+        if (volume < 500_000 || spread > 0.5) continue;
 
-      const candles = await fetchCandles(pair);
-      if (!candles.length) continue;
+        const candles = await fetchCandles(pair);
+        if (!candles.length) continue;
 
-      const signal = generateTrendSignal(candles);
-      if (!signal) continue;
+        const signal = generateTrendSignal(candles);
+        if (!signal) continue;
 
-      let score = 0;
-      if (signal === "BUY") score += 3;
-      if (signal === "SELL") score -= 3;
-      if (spread < 0.1) score += 1;
-      if (volume > 5_000_000) score += 2;
+        let score = 0;
+        if (signal === "BUY") score += 3;
+        if (signal === "SELL") score -= 3;
+        if (spread < 0.1) score += 1;
+        if (volume > 5_000_000) score += 2;
 
-      console.log(`📝 ${pair} Score: ${score}`);
+        console.log(`📝 ${pair} Score: ${score}`);
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestPair = pair;
+        if (score > bestScore) {
+          bestScore = score;
+          bestPair = pair;
+        }
+      } catch (err) {
+        console.warn(`🛑 Skipping ${pair} due to error: ${err.message}`);
       }
-    } catch (err) {
-      console.warn(`⚠️ Skipping ${pair} due to error: ${err.message}`);
     }
+
+    if (bestPair) break; // Stop searching if a good pair is found
   }
 
   if (bestPair) {
     console.log(`✅ Best Pair Selected: ${bestPair} (Score: ${bestScore})`);
   } else {
-    console.log(
-      "⚠️ No pair met the criteria. Selecting the highest-volume pair..."
-    );
-    bestPair = pairs[0];
+    console.log("⚠️ No suitable trading pair found.");
   }
 
   return bestPair;
@@ -148,7 +129,7 @@ async function startTrading() {
   console.log(`🚀 Starting Trading Bot... Scanning for the best pair...`);
 
   setInterval(async () => {
-    await monitorPositions(); // ✅ Calls `monitorPositions()` from `tradeExecutor.js`
+    await monitorPositions();
 
     const bestPair = await findBestTradingPair();
     if (!bestPair) {
@@ -164,14 +145,14 @@ async function startTrading() {
     const candles = await fetchCandles(bestPair);
     const signal = generateTrendSignal(candles);
 
-    console.log(`📢 Trade Signal for ${bestPair}: ${signal}`);
+    console.log(`📢📢📢 Trade Signal for ${bestPair}: ${signal} 📢📢📢 `);
 
     if (signal === "BUY") {
-      console.log(`📢 BUY Signal for ${bestPair}`);
-      await executeTrade(bestPair, "buy", tradeAmount); // ✅ Now includes trade amount
+      console.log(`📢🟢📢 BUY Signal for ${bestPair}📢🟢📢`);
+      await executeTrade(bestPair, "buy", tradeAmount);
     } else if (signal === "SELL") {
-      console.log(`📢 SELL Signal for ${bestPair}`);
-      await executeTrade(bestPair, "sell", tradeAmount); // ✅ Now includes trade amount
+      console.log(`📢💔📢 SELL Signal for ${bestPair} 📢💔📢`);
+      await executeTrade(bestPair, "sell", tradeAmount);
     } else {
       console.log(`🔍 No trade signal for ${bestPair}`);
     }

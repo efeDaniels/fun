@@ -19,27 +19,50 @@ const MAX_PAIRS_TO_ANALYZE = 300; // Limit total analysis to avoid rate limiting
  * Fetch USDT balance and return fixed trade amount
  */
 async function getTradeAmount() {
-  return 10; // Fixed trade amount of $10
+  return 20; // Fixed trade amount of $10
 }
 
 /**
- * Fetch USDT trading pairs from the exchange
+ * Fetch USDT trading pairs and filter by volume
  */
-async function getTradingPairs() {
+async function getTopTradingPairs() {
   try {
-    const markets = await exchangeInstance.loadMarkets();
-    return Object.keys(markets).filter((pair) => pair.endsWith("/USDT:USDT"));
+      const markets = await exchangeInstance.loadMarkets();
+      const usdtPairs = Object.keys(markets).filter(pair => pair.endsWith("/USDT:USDT"));
+
+      console.log(`🔍 Found ${usdtPairs.length} USDT pairs. Fetching volume data...`);
+
+      // Fetch volume for each pair
+      const volumeData = [];
+      for (const pair of usdtPairs) {
+          try {
+              const ticker = await exchangeInstance.fetchTicker(pair);
+              volumeData.push({ pair, volume: ticker.quoteVolume || 0 });
+          } catch (err) {
+              console.warn(`⚠️ Skipping ${pair} due to error: ${err.message}`);
+          }
+      }
+
+      // Sort by volume (highest first) and pick the top 75 pairs
+      const topPairs = volumeData
+          .sort((a, b) => b.volume - a.volume)
+          .slice(0, 75)
+          .map(data => data.pair);
+
+      console.log(`✅ Selected Top ${topPairs.length} Pairs by Volume.`);
+      return topPairs;
   } catch (err) {
-    console.error("❌ Error fetching trading pairs:", err.message);
-    return [];
+      console.error("❌ Error fetching trading pairs:", err.message);
+      return [];
   }
 }
+
 
 /**
  * Find the best trading pair based on volume, spread, trend signal, and order flow
  */
 async function findBestTradingPair() {
-  const pairs = await getTradingPairs();
+  const pairs = await getTopTradingPairs();
   if (pairs.length === 0) return null;
 
   let bestPair = null;
@@ -104,13 +127,16 @@ async function findBestTradingPair() {
  */
 async function fetchCandles(symbol) {
   try {
-    const ohlcv = await exchangeInstance.fetchOHLCV(
-      symbol,
-      "1m",
-      undefined,
-      100
-    );
-    return ohlcv.map((c) => ({
+    const ohlcv = await exchangeInstance.fetchOHLCV(symbol, "1m", undefined, 250); // Fetch 250 candles
+
+    if (!ohlcv || ohlcv.length < 200) { // ✅ Ensure we get at least 200 candles
+      console.warn(`⚠️ Not enough candles fetched for ${symbol}. Only received ${ohlcv ? ohlcv.length : 0}.`);
+      return [];
+    }
+
+    console.log(`📊 ${symbol}: Successfully fetched ${ohlcv.length} candles.`);
+
+    return ohlcv.map(c => ({
       open: c[1],
       high: c[2],
       low: c[3],
@@ -133,11 +159,11 @@ async function startTrading() {
 
     const bestPair = await findBestTradingPair();
     if (!bestPair) {
-      console.log("⚠️ No suitable trading pair found. Retrying...");
+      console.log("ℹ️ No suitable trading pair found. Retrying...");
       return;
     }
 
-    console.log(`✅ Best Pair: ${bestPair}`);
+    console.log(`✅ 👉 Best Pair: ${bestPair}`);
 
     const tradeAmount = await getTradeAmount();
     if (tradeAmount === 0) return;
@@ -145,13 +171,13 @@ async function startTrading() {
     const candles = await fetchCandles(bestPair);
     const signal = generateTrendSignal(candles);
 
-    console.log(`📢📢📢 Trade Signal for ${bestPair}: ${signal} 📢📢📢 `);
+    console.log(`📢📢📢📢📢📢📢📢📢  Trade Signal for ${bestPair}: ${signal} 📢📢📢📢📢📢📢📢📢   `);
 
     if (signal === "BUY") {
-      console.log(`📢🟢📢 BUY Signal for ${bestPair}📢🟢📢`);
+      console.log(`🟢🟢🟢🟢🟢🟢🟢🟢 BUY Signal for ${bestPair} 🟢🟢🟢🟢🟢🟢🟢🟢`);
       await executeTrade(bestPair, "buy", tradeAmount);
     } else if (signal === "SELL") {
-      console.log(`📢💔📢 SELL Signal for ${bestPair} 📢💔📢`);
+      console.log(`💔💔💔💔💔💔💔💔 SELL Signal for ${bestPair} 💔💔💔💔💔💔💔💔`);
       await executeTrade(bestPair, "sell", tradeAmount);
     } else {
       console.log(`🔍 No trade signal for ${bestPair}`);

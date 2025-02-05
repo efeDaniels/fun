@@ -10,9 +10,9 @@ const exchangeInstance = new ccxt.bybit({
 });
 
 // Bot Parameters
-const FIXED_TRADE_AMOUNT = 15; // Always trade exactly $10 per position
-const DEFAULT_LEVERAGE = 5; // Set default leverage
-const MAX_OPEN_POSITIONS = 5; // Limit total open positions
+const FIXED_TRADE_AMOUNT = 20; // Always trade exactly $10 per position
+const DEFAULT_LEVERAGE = 3; // Set default leverage
+const MAX_OPEN_POSITIONS = 4; // Limit total open positions
 const MAX_TRADES_PER_PAIR = 1; // Limit max trades per pair
 
 // Track trade history
@@ -86,7 +86,7 @@ async function monitorPositions() {
       );
 
       // 🚀 Close when reaching PnL target
-      if (pnlPercentage >= 15 || pnlPercentage <= -15) {
+      if (pnlPercentage >= 10 || pnlPercentage <= -20) {
         console.log(
           `✅✅ Closing ${position.symbol} as Unrealized PnL target reached ✅ ✅ `
         );

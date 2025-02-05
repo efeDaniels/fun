@@ -27,16 +27,12 @@ function calculateIndicators(candles) {
     close: closes,
   });
 
-  console.log(
-    `📊 EMA50: ${ema50.length}, EMA200: ${ema200.length}, RSI: ${rsi.length}, MACD: ${macd.length}, ADX: ${adx.length}`
-  );
   return { ema50, ema200, rsi, macd, adx };
 }
 
 function generateTrendSignal(candles) {
   const { ema50, ema200, rsi, macd, adx } = calculateIndicators(candles);
 
-  // ✅ If any indicator is missing, we skip
   if (
     ema50.length === 0 ||
     ema200.length === 0 ||
@@ -55,11 +51,10 @@ function generateTrendSignal(candles) {
   const lastMACD = macd[macd.length - 1];
   const prevMACD = macd.length > 1 ? macd[macd.length - 2] : lastMACD;
   const lastRSI = rsi[rsi.length - 1];
-  const lastADX = adx[adx.length - 1];
+  const lastADX = adx.length > 0 ? adx[adx.length - 1].adx || 0 : 0;
 
-  // ✅ Ensuring lastMACD is valid before accessing properties
-  if (!lastMACD || !prevMACD) {
-    console.warn(`⚠️ MACD data incomplete, skipping trade decision.`);
+  if (!lastMACD || !prevMACD || !lastMACD.MACD || !prevMACD.MACD) {
+    console.warn(`⚠️ MACD data is incomplete, skipping trade decision.`);
     return "HOLD";
   }
 
@@ -75,30 +70,34 @@ function generateTrendSignal(candles) {
   const macdCrossoverDown =
     lastMACD.MACD < lastMACD.signal && prevMACD.MACD > prevMACD.signal;
 
-  const macdBearish = lastMACD.MACD < 0; // Ensure MACD is negative for shorts
+  const macdBullish = lastMACD.MACD > 0; // Ensures MACD is positive for long positions
+  const macdBearish = lastMACD.MACD < 0; // Ensures MACD is negative for short positions
 
-  const strongTrend = lastADX > 20; // ADX > 20 means market is trending
+  const strongTrend = lastADX >= 15; // 🔹 Lowered from 20 to 15 for more opportunities
 
-  // ✅ **BUY Conditions (More Opportunities)**
+  // **BUY Conditions**
   if (
-    (emaCrossoverUp || macdCrossoverUp) &&
-    lastRSI > 35 && // 🔹 Loosened RSI lower bound for more entries
-    lastRSI < 75 && // 🔹 Loosened RSI upper bound slightly
+    (emaCrossoverUp || macdCrossoverUp || macdBullish) && // 🔹 Added MACD being bullish
+    lastRSI > 25 &&
+    lastRSI < 85 && // 🔹 Loosened RSI range
     strongTrend
   ) {
+    console.log(`🟢 BUY Signal Triggered!`);
     return "BUY";
   }
 
-  // ✅ **SELL Conditions (Better Shorts)**
+  // **SELL Conditions**
   if (
     (emaCrossoverDown || macdCrossoverDown || macdBearish) &&
-    lastRSI < 55 && // 🔹 Loosened RSI upper bound for shorts
+    lastRSI < 65 &&
     strongTrend
   ) {
+    console.log(`🔴 SELL Signal Triggered!`);
     return "SELL";
   }
 
+  console.log(`⚠️ HOLD: No strong trend detected.`);
   return "HOLD";
 }
 
-module.exports = { generateTrendSignal };
+module.exports = { generateTrendSignal, calculateIndicators };

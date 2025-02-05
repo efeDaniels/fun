@@ -10,7 +10,7 @@ const exchangeInstance = new ccxt.bybit({
 });
 
 // Bot Parameters
-const FIXED_TRADE_AMOUNT = 20; // Always trade exactly $10 per position
+const FIXED_TRADE_AMOUNT = 20; // Always trade exactly $20 per position
 const DEFAULT_LEVERAGE = 3; // Set default leverage
 const MAX_OPEN_POSITIONS = 4; // Limit total open positions
 const MAX_TRADES_PER_PAIR = 1; // Limit max trades per pair
@@ -88,11 +88,13 @@ async function monitorPositions() {
       // 🚀 Close when reaching PnL target
       if (pnlPercentage >= 10 || pnlPercentage <= -20) {
         console.log(
-          `✅✅ Closing ${position.symbol} as Unrealized PnL target reached ✅ ✅ `
+          `⚠️ Closing ${
+            position.symbol
+          } due to PnL threshold reached. (PnL: ${pnlPercentage.toFixed(2)}%)`
         );
 
         try {
-          await exchangeInstance.createOrder(
+          const closeOrder = await exchangeInstance.createOrder(
             formattedSymbol,
             "market",
             position.side === "long" ? "sell" : "buy", // Flip side to close
@@ -101,7 +103,11 @@ async function monitorPositions() {
             { reduceOnly: true } // Ensure it's a close order
           );
 
-          console.log(`✅ Successfully closed ${position.symbol}`);
+          console.log(
+            `✅ Position Closed: ${formattedSymbol} - ${
+              closeOrder.side === "sell" ? "SHORT" : "LONG"
+            } - Final PnL: ${pnlPercentage.toFixed(2)}%`
+          );
         } catch (closeError) {
           console.error(
             `❌ Error closing ${position.symbol}:`,
@@ -110,6 +116,7 @@ async function monitorPositions() {
         }
       }
     }
+
     // ✅ Stop scanning for new trades if max positions are open
     if (openPositions.length >= 5) {
       console.log("⚠️ Max positions reached! Prioritizing PnL monitoring.");
@@ -133,9 +140,7 @@ async function executeTrade(symbol, side) {
 
     // Enforce max open positions
     if (openPositions.length >= MAX_OPEN_POSITIONS) {
-      console.log(
-        "⚠️ Max positions reached (5). Monitoring existing trades..."
-      );
+      console.log("⚠️ Max positions reached. Monitoring existing trades...");
       return;
     }
 
@@ -161,7 +166,7 @@ async function executeTrade(symbol, side) {
     await setLeverage(symbol, DEFAULT_LEVERAGE);
 
     // Calculate total position size
-    let totalPositionSize = FIXED_TRADE_AMOUNT * DEFAULT_LEVERAGE; // Ex: $10 margin * 5x = $50 position
+    let totalPositionSize = FIXED_TRADE_AMOUNT * DEFAULT_LEVERAGE; // Example: $10 margin * 5x = $50 position
     let amount = totalPositionSize / price;
 
     // Ensure amount meets exchange minimum
@@ -187,6 +192,7 @@ async function executeTrade(symbol, side) {
       } - ${side.toUpperCase()} ${amount} of ${symbol}`
     );
 
+    // Track active trades
     tradeHistory.push(order);
     activePairs.set(symbol, currentTrades + 1); // Increment trade count for this pair
   } catch (err) {
@@ -194,4 +200,10 @@ async function executeTrade(symbol, side) {
   }
 }
 
-module.exports = { executeTrade, tradeHistory, monitorPositions, getOpenPositions };
+module.exports = {
+  executeTrade,
+  tradeHistory,
+  monitorPositions,
+  getOpenPositions,
+  MAX_OPEN_POSITIONS,
+};

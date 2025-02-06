@@ -148,8 +148,7 @@ async function findBestTradingPair() {
   const pairs = await getTopTradingPairs();
   if (pairs.length === 0) return null;
 
-  let bestPair = null;
-  let bestScore = null;
+  let allResults = [];
 
   for (
     let i = 0;
@@ -170,7 +169,10 @@ async function findBestTradingPair() {
 
           const volume = ticker.quoteVolume || ticker.baseVolume || 0;
           const spread = ticker.ask - ticker.bid;
-          if (volume < 10_000 || spread > 0.5) return null;
+          let reasoning = [];
+
+          if (volume < 10_000) return null;
+          if (spread > 0.5) return null;
 
           const candles = await fetchCandles(pair);
           if (!candles.length) return null;
@@ -179,18 +181,30 @@ async function findBestTradingPair() {
           if (!signal) return null;
 
           let score = 0;
-          let reasoning = [];
 
           if (signal === "BUY") {
             score += 3;
-            reasoning.push("🔹 Buy signal detected (+3)");
+            reasoning.push("✅ Buy signal detected (+3)");
           } else if (signal === "SELL") {
             score -= 3;
-            reasoning.push("🔹 Sell signal detected (-3)");
+            reasoning.push("✅ Sell signal detected (-3)");
           }
 
-          if (spread < 0.2) score += 1;
-          if (volume > 40_000) score += signal === "BUY" ? 2 : -2;
+          if (spread < 0.2) {
+            if (signal === "BUY") {
+              score += 1;
+              reasoning.push("✅ Low spread benefits LONG (+1)");
+            } else if (signal === "SELL") {
+              score -= 1;
+              reasoning.push("❌ Low spread weakens SHORT (-1)");
+            }
+          } else {
+            reasoning.push("⚠️ High spread detected (No score impact)");
+          }
+
+          if (volume > 40_000) {
+            score += signal === "BUY" ? 2 : -2;
+          }
 
           console.log(`📝 ${pair} Score: ${score}`);
           return { pair, score, candles };
@@ -201,30 +215,28 @@ async function findBestTradingPair() {
       })
     );
 
-    const validResults = results.filter((res) => res !== null);
-    for (const result of validResults) {
-      const { pair, score, candles } = result;
-      if (
-        bestScore === null ||
-        (score > bestScore && bestScore >= 0) ||
-        (score < bestScore && bestScore < 0)
-      ) {
-        bestScore = score;
-        bestPair = { pair, candles };
+    allResults.push(...results.filter((res) => res !== null));
+  }
+
+  if (allResults.length > 0) {
+    let bestTrade = allResults[0];
+
+    for (const trade of allResults) {
+      if (bestTrade.score >= 0 && trade.score > bestTrade.score) {
+        bestTrade = trade; // Pick strongest long
+      }
+      if (bestTrade.score < 0 && trade.score < bestTrade.score) {
+        bestTrade = trade; // Pick strongest short
       }
     }
 
-    if (bestPair) break;
-  }
-
-  if (bestPair) {
     console.log(
-      `✅ Best Pair Selected: ${bestPair.pair} (Score: ${bestScore})`
+      `✅ Best Pair Selected: ${bestTrade.pair} (Score: ${bestTrade.score})`
     );
     return {
-      bestPair: bestPair.pair,
-      bestCandles: bestPair.candles,
-      bestScore,
+      bestPair: bestTrade.pair,
+      bestCandles: bestTrade.candles,
+      bestScore: bestTrade.score,
     };
   } else {
     console.log("⚠️ No suitable trading pair found.");

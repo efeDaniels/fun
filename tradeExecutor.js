@@ -16,7 +16,8 @@ const RISK_CONFIG = {
   maxPositions: 4,
   maxTradesPerPair: 1,
   defaultLeverage: 3,
-  maxLeverage: 5,
+  maxLeverage: 3,
+  minLeverage: 2,
   minTradeAmount: 20,
   maxTradeAmount: 100
 };
@@ -30,14 +31,28 @@ const activePairs = new Map(); // Track active trading pairs and their trade cou
  */
 async function setLeverage(symbol, leverage = RISK_CONFIG.defaultLeverage) {
   try {
-    await exchangeInstance.setLeverage(leverage, symbol);
-    console.log(`✅ Leverage set to ${leverage}x for ${symbol}`);
-  } catch (err) {
-    if (err.message.includes("leverage not modified")) {
-      console.warn(`⚠️ Leverage for ${symbol} is already set to ${leverage}x.`);
-    } else {
-      console.error(`❌ Error setting leverage: ${err.message}`);
+    // Format symbol for Bybit (remove :USDT and /)
+    const formattedSymbol = symbol.replace('/USDT:USDT', 'USDT');
+    
+    // Set leverage using proper Bybit format
+    await exchangeInstance.setLeverage(leverage, formattedSymbol, {
+      marginMode: 'isolated',  // Explicitly set isolated margin
+      leverage: leverage,      // Explicitly set leverage value
+      symbol: formattedSymbol // Pass formatted symbol
+    });
+
+    // Verify leverage was set
+    const positions = await exchangeInstance.fetchPositions([symbol]);
+    const currentLeverage = positions[0]?.leverage;
+    
+    if (currentLeverage !== leverage) {
+      throw new Error(`Leverage not set correctly. Wanted: ${leverage}x, Got: ${currentLeverage}x`);
     }
+
+    console.log(`✅ Leverage verified at ${leverage}x for ${symbol}`);
+  } catch (err) {
+    console.error(`❌ Error setting leverage for ${symbol}:`, err.message);
+    throw err; // Re-throw to prevent trade with wrong leverage
   }
 }
 
@@ -137,9 +152,9 @@ async function monitorPositions() {
       }
     }
 
-    // ✅ Stop scanning for new trades if max positions are open
-    if (openPositions.length >= 5) {
-      console.log("⚠️ Max positions reached! Prioritizing PnL monitoring.");
+    // Fixed: Use RISK_CONFIG.maxPositions instead of hardcoded 5
+    if (openPositions.length >= RISK_CONFIG.maxPositions) {
+      console.log(`⚠️ Max positions (${RISK_CONFIG.maxPositions}) reached! Prioritizing PnL monitoring.`);
     }
   } catch (err) {
     console.error(`❌ Error monitoring positions: ${err.message}`);
@@ -179,14 +194,21 @@ async function calculateLeverage(symbol) {
     const volatility = candles.reduce((sum, candle) => 
       sum + Math.abs(candle[2] - candle[3]) / candle[4], 0) / candles.length;
     
-    // Adjust leverage based on volatility
+    // Start with default leverage
     let leverage = RISK_CONFIG.defaultLeverage;
-    if (volatility > 0.05) leverage--; // High volatility -> lower leverage
-    if (volatility < 0.02) leverage++; // Low volatility -> higher leverage
+
+    // Stricter volatility rules
+    if (volatility > 0.04) {
+      leverage = RISK_CONFIG.minLeverage; // Use minimum when volatile
+    } else if (volatility < 0.01) {
+      leverage = RISK_CONFIG.maxLeverage; // Use maximum when stable
+    }
     
-    return Math.min(Math.max(leverage, 1), RISK_CONFIG.maxLeverage);
+    console.log(`📊 ${symbol} - Volatility: ${(volatility * 100).toFixed(2)}% -> Leverage: ${leverage}x`);
+    
+    return leverage;
   } catch (err) {
-    console.error(`❌ Error calculating leverage: ${err.message}`);
+    console.error(`❌ Error calculating leverage for ${symbol}:`, err.message);
     return RISK_CONFIG.defaultLeverage;
   }
 }
@@ -231,9 +253,18 @@ async function calculateAvailablePositionSize(symbol, leverage) {
  */
 async function executeTrade(symbol, side, amount, score, reasoning = []) {
     try {
-        // Check existing positions from exchange first
-        const positions = await exchangeInstance.fetchPositions([symbol]);
-        const existingPosition = positions.find(pos => 
+        // Get ALL open positions first
+        const openPositions = await getOpenPositions();
+        console.log(`📊 Current open positions: ${openPositions.length}/${RISK_CONFIG.maxPositions}`);
+        
+        // Check against actual positions count, not activePairs
+        if (openPositions.length >= RISK_CONFIG.maxPositions) {
+            console.log(`⚠️ Max positions (${RISK_CONFIG.maxPositions}) reached, skipping trade`);
+            return null;
+        }
+
+        // Check for existing position in this symbol
+        const existingPosition = openPositions.find(pos => 
             pos.symbol === symbol && 
             Math.abs(pos.contracts) > 0
         );
@@ -243,15 +274,20 @@ async function executeTrade(symbol, side, amount, score, reasoning = []) {
             return null;
         }
 
-        if (activePairs.size >= RISK_CONFIG.maxPositions) {
-            console.log(`⚠️ Max positions (${RISK_CONFIG.maxPositions}) reached, skipping trade`);
+        // Set and verify leverage BEFORE calculating position size
+        const leverage = await calculateLeverage(symbol);
+        await setLeverage(symbol, leverage);
+
+        // Double check leverage one more time
+        const positions = await exchangeInstance.fetchPositions([symbol]);
+        const actualLeverage = positions[0]?.leverage;
+        
+        if (actualLeverage !== leverage) {
+            console.error(`❌ Leverage verification failed! Wanted: ${leverage}x, Got: ${actualLeverage}x`);
             return null;
         }
 
-        // Get optimal leverage
-        const leverage = await calculateLeverage(symbol);
-        
-        // Calculate contract size
+        // Calculate contract size with verified leverage
         const contractSize = await calculateAvailablePositionSize(symbol, leverage);
         
         if (contractSize <= 0) {

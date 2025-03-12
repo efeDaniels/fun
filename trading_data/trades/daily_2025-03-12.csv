@@ -1,3 +1,2 @@
-TIMESTAMP,PAIR,TYPE,SIDE,ENTRY_PRICE,EXIT_PRICE,AMOUNT,LEVERAGE,PNL,PNL_PERCENT,ENTRY_SCORE,REASON,DURATION_HOURS
-2025-03-12T14:08:39.237Z,ARB/USDT:USDT,ENTRY,buy,,,175.2336448598131,3,,,,,
-2025-03-12T14:09:23.111Z,OP/USDT:USDT,ENTRY,buy,,,70.97232079489,3,,,,,
+Timestamp      ,Pair           ,Type           ,Side           ,Entry_Price    ,Exit_Price     ,Contracts      ,Leverage       ,PnL_USDT       ,PnL_%          ,Score          ,Reason         ,Duration_Hours 
+2025-03-12T16:15:17.341Z,ETH/USDT:USDT,ENTRY,buy,,,0.0319,3,,,7.00,,

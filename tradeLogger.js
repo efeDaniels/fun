@@ -30,20 +30,37 @@ class TradeLogger {
 
     initializeCsvWriters() {
         const headers = [
-            {id: 'timestamp', title: 'TIMESTAMP'},
-            {id: 'pair', title: 'PAIR'},
-            {id: 'type', title: 'TYPE'},
-            {id: 'side', title: 'SIDE'},
-            {id: 'entryPrice', title: 'ENTRY_PRICE'},
-            {id: 'exitPrice', title: 'EXIT_PRICE'},
-            {id: 'amount', title: 'AMOUNT'},
-            {id: 'leverage', title: 'LEVERAGE'},
-            {id: 'pnl', title: 'PNL'},
-            {id: 'pnlPercent', title: 'PNL_PERCENT'},
-            {id: 'score', title: 'ENTRY_SCORE'},
-            {id: 'reason', title: 'REASON'},
-            {id: 'duration', title: 'DURATION_HOURS'}
-        ];
+            {id: 'timestamp', title: 'Timestamp'},
+            {id: 'pair', title: 'Pair'},
+            {id: 'type', title: 'Type'},
+            {id: 'side', title: 'Side'},
+            {id: 'entryPrice', title: 'Entry_Price'},
+            {id: 'exitPrice', title: 'Exit_Price'},
+            {id: 'amount', title: 'Contracts'},
+            {id: 'leverage', title: 'Leverage'},
+            {id: 'pnl', title: 'PnL_USDT'},
+            {id: 'pnlPercent', title: 'PnL_%'},
+            {id: 'score', title: 'Score'},
+            {id: 'reason', title: 'Reason'},
+            {id: 'duration', title: 'Duration_Hours'},
+            {id: 'marketVolume', title: 'Market_Volume'},
+            {id: 'marketVolatility', title: 'Volatility_24h'},
+            {id: 'marketTrend', title: 'Market_Trend'},
+            {id: 'fundingRate', title: 'Funding_Rate'},
+            {id: 'openInterest', title: 'Open_Interest'},
+            {id: 'liquidations24h', title: 'Liquidations_24h'},
+            {id: 'riskRewardRatio', title: 'Risk_Reward'},
+            {id: 'maxDrawdown', title: 'Max_Drawdown'},
+            {id: 'profitFactor', title: 'Profit_Factor'},
+            {id: 'sharpeRatio', title: 'Sharpe_Ratio'},
+            {id: 'marketCap', title: 'Market_Cap'},
+            {id: 'dominance', title: 'BTC_Dominance'},
+            {id: 'indicators', title: 'Key_Indicators'}
+        ].map(header => ({
+            ...header,
+            // Ensure proper CSV formatting
+            title: header.title.padEnd(15, ' ')
+        }));
 
         // Create/append to historical file
         this.historicalWriter = createCsvWriter({
@@ -84,35 +101,83 @@ class TradeLogger {
             pair: tradeData.pair,
             type: 'ENTRY',
             side: tradeData.side,
-            entryPrice: tradeData.price,
-            exitPrice: null,
-            amount: tradeData.amount,
-            leverage: tradeData.leverage,
-            pnl: null,
-            pnlPercent: null,
-            score: tradeData.score,
-            reason: tradeData.reasoning.join(' | '),
-            duration: null
+            entryPrice: tradeData.price?.toFixed(4) || '',
+            exitPrice: '',
+            amount: tradeData.amount?.toFixed(4) || '',
+            leverage: tradeData.leverage || '',
+            pnl: '',
+            pnlPercent: '',
+            score: tradeData.score?.toFixed(2) || '',
+            reason: (tradeData.reasoning || []).join(' | '),
+            duration: '',
+            marketVolume: tradeData.marketData?.volume24h || '',
+            marketVolatility: tradeData.marketData?.volatility24h || '',
+            marketTrend: tradeData.marketData?.trend || '',
+            fundingRate: tradeData.marketData?.fundingRate || '',
+            openInterest: tradeData.marketData?.openInterest || '',
+            liquidations24h: tradeData.marketData?.liquidations24h || '',
+            riskRewardRatio: tradeData.riskRewardRatio || '',
+            maxDrawdown: tradeData.maxDrawdown || '',
+            profitFactor: tradeData.profitFactor || '',
+            sharpeRatio: tradeData.sharpeRatio || '',
+            marketCap: tradeData.marketData?.marketCap || '',
+            dominance: tradeData.marketData?.btcDominance || '',
+            indicators: JSON.stringify(tradeData.indicators || {})
         };
 
         await this.logTrade(entry);
     }
 
     async logTradeExit(tradeData) {
+        // Calculate trade metrics
+        const profitFactor = tradeData.pnl > 0 ? 
+            Math.abs(tradeData.pnl / tradeData.initialRisk) : 0;
+        
+        const riskRewardRatio = Math.abs(
+            (tradeData.exitPrice - tradeData.entryPrice) / 
+            (tradeData.entryPrice - tradeData.stopLoss)
+        );
+
+        const maxDrawdown = Math.abs(
+            ((tradeData.lowestPrice || tradeData.exitPrice) - tradeData.entryPrice) / 
+            tradeData.entryPrice * 100
+        );
+
+        // Calculate Sharpe ratio using daily returns
+        const returns = tradeData.pnlPercent / 100;
+        const timePeriod = parseFloat(
+            ((new Date() - new Date(tradeData.entryTime)) / (1000 * 60 * 60 * 24))
+        );
+        const sharpeRatio = (returns / timePeriod) / (tradeData.volatility || 0.01);
+
         const entry = {
             timestamp: new Date().toISOString(),
             pair: tradeData.pair,
             type: 'EXIT',
             side: tradeData.side,
-            entryPrice: tradeData.entryPrice,
-            exitPrice: tradeData.exitPrice,
-            amount: tradeData.amount,
-            leverage: tradeData.leverage,
-            pnl: tradeData.pnl,
-            pnlPercent: tradeData.pnlPercent,
-            score: null,
-            reason: tradeData.exitReason,
-            duration: ((new Date() - new Date(tradeData.entryTime)) / (1000 * 60 * 60)).toFixed(2)
+            entryPrice: tradeData.entryPrice?.toFixed(4) || '',
+            exitPrice: tradeData.exitPrice?.toFixed(4) || '',
+            amount: tradeData.amount?.toFixed(4) || '',
+            leverage: tradeData.leverage || '',
+            pnl: tradeData.pnl?.toFixed(4) || '',
+            pnlPercent: tradeData.pnlPercent?.toFixed(2) || '',
+            score: '',
+            reason: tradeData.exitReason || '',
+            duration: tradeData.entryTime ? 
+                ((new Date() - new Date(tradeData.entryTime)) / (1000 * 60 * 60)).toFixed(2) : '',
+            marketVolume: tradeData.marketData?.volume24h || '',
+            marketVolatility: tradeData.marketData?.volatility24h || '',
+            marketTrend: tradeData.marketData?.trend || '',
+            fundingRate: tradeData.marketData?.fundingRate || '',
+            openInterest: tradeData.marketData?.openInterest || '',
+            liquidations24h: tradeData.marketData?.liquidations24h || '',
+            riskRewardRatio: riskRewardRatio.toFixed(2) || '',
+            maxDrawdown: maxDrawdown.toFixed(2) || '',
+            profitFactor: profitFactor.toFixed(2) || '',
+            sharpeRatio: sharpeRatio.toFixed(2) || '',
+            marketCap: tradeData.marketData?.marketCap || '',
+            dominance: tradeData.marketData?.btcDominance || '',
+            indicators: JSON.stringify(tradeData.indicators || {})
         };
 
         await this.logTrade(entry);

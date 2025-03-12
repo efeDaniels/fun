@@ -4,8 +4,8 @@ const {
   executeTrade,
   monitorPositions,
   getOpenPositions,
-  MAX_OPEN_POSITIONS,
-} = require("./tradeExecutor"); // ✅ Import getOpenPositions
+  RISK_CONFIG,
+} = require("./tradeExecutor");
 const { getSupportResistanceLevels } = require("./support_resistance");
 require("dotenv").config();
 
@@ -40,7 +40,6 @@ const rateLimiter = {
 
 // Define trusted pairs for trading
 const TRUSTED_PAIRS = [
-  "BTC/USDT:USDT",
   "ETH/USDT:USDT",
   "SOL/USDT:USDT",
   "BNB/USDT:USDT",
@@ -57,16 +56,27 @@ const TRUSTED_PAIRS = [
   "OP/USDT:USDT"
 ];
 
+const BLACKLISTED_PAIRS = [
+  "BTC/USDT:USDT", //Min Trade Amount is too high for BTC so excluding it from the list at testing phrase.
+];
+
+// Add at the top with other constants
+const tradeStats = {
+    successful: 0,
+    failed: 0,
+    totalProfit: 0
+};
+
 /**
  * Check if the number of open positions is at the threshold
  */
 async function checkPositionThreshold() {
   const openPositions = await getOpenPositions();
 
-  if (openPositions.length >= MAX_OPEN_POSITIONS) {
+  if (openPositions.length >= RISK_CONFIG.maxPositions) {
     if (shouldAnalyzeMarket) {
       console.log(
-        `⚠️ Max positions reached (${MAX_OPEN_POSITIONS}). Pausing market analysis.`
+        `⚠️ Max positions reached (${RISK_CONFIG.maxPositions}). Pausing market analysis.`
       );
     }
     shouldAnalyzeMarket = false;
@@ -96,10 +106,11 @@ async function getTopTradingPairs() {
     const openPositions = await getOpenPositions();
     const openPositionPairs = new Set(openPositions.map(pos => pos.symbol));
     
-    // Filter out pairs we already have positions in
+    // Filter out blacklisted pairs and pairs we already have positions in
     const availablePairs = TRUSTED_PAIRS.filter(pair => 
         pair in markets && 
-        !openPositionPairs.has(pair)
+        !openPositionPairs.has(pair) &&
+        !BLACKLISTED_PAIRS.includes(pair)
     );
     
     console.log(`🔍 Analyzing ${availablePairs.length} available pairs (${openPositionPairs.size} pairs excluded due to open positions)...`);
@@ -366,11 +377,11 @@ async function startTrading() {
   console.log(`🚀 Starting Trading Bot...`);
 
   setInterval(async () => {
-    await monitorPositions();
-    await checkPositionThreshold();
+    const openPositions = await getOpenPositions();
+    console.log(`📊 Verified open positions: ${openPositions.length}/${RISK_CONFIG.maxPositions}`);
 
-    if (!shouldAnalyzeMarket) {
-      console.log("🛑 Market analysis paused. Monitoring only...");
+    if (openPositions.length >= RISK_CONFIG.maxPositions) {
+      console.log(`⚠️ At max positions (${openPositions.length}/${RISK_CONFIG.maxPositions}), skipping analysis`);
       return;
     }
 
@@ -383,12 +394,23 @@ async function startTrading() {
     const tradeAmount = await getTradeAmount();
     if (tradeAmount === 0) return;
 
+    // Double check positions again before executing trade
+    const currentPositions = await getOpenPositions();
+    if (currentPositions.length >= RISK_CONFIG.maxPositions) {
+      console.log(`⚠️ Max positions reached during analysis, skipping trade`);
+      return;
+    }
+
     if (bestScore > 2) {
       console.log("🚀 Strong LONG signal detected");
-      await executeTrade(bestPair, "buy", tradeAmount);
+      await executeTrade(bestPair, "buy", tradeAmount, bestScore);
+      tradeStats.successful++;
+      tradeStats.totalProfit += bestScore;
     } else if (bestScore < -2) {
       console.log("🚀 Strong SHORT signal detected");
-      await executeTrade(bestPair, "sell", tradeAmount);
+      await executeTrade(bestPair, "sell", tradeAmount, bestScore);
+      tradeStats.failed++;
+      tradeStats.totalProfit -= bestScore;
     } else {
       console.log("⚠️ No strong signals detected");
     }
@@ -396,21 +418,20 @@ async function startTrading() {
 
   process.on('unhandledRejection', (err) => {
     console.error('Unhandled rejection:', err);
-    // Attempt reconnect after 1 minute
     setTimeout(() => {
       console.log('Attempting recovery...');
       startTrading();
     }, 60000);
   });
 
-  // Log performance every hour
+  // Fixed performance logging
   setInterval(() => {
     console.log(`
       📊 Performance Report:
-      Successful Trades: ${trades.successful}
-      Failed Trades: ${trades.failed}
-      Win Rate: ${(trades.successful/(trades.successful+trades.failed)*100).toFixed(2)}%
-      Total Profit: $${trades.totalProfit.toFixed(2)}
+      Successful Trades: ${tradeStats.successful}
+      Failed Trades: ${tradeStats.failed}
+      Win Rate: ${((tradeStats.successful/(tradeStats.successful+tradeStats.failed)||0)*100).toFixed(2)}%
+      Total Profit: $${tradeStats.totalProfit.toFixed(2)}
     `);
   }, 3600000);
 }

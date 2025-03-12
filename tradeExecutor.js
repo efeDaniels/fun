@@ -12,14 +12,12 @@ const exchangeInstance = new ccxt.bybit({
 
 // Bot Risk Management Parameters
 const RISK_CONFIG = {
-  maxAccountRiskPercent: 2, // Max 2% account risk per trade
   maxPositions: 4,
   maxTradesPerPair: 1,
   defaultLeverage: 3,
-  maxLeverage: 3,
-  minLeverage: 2,
-  minTradeAmount: 20,
-  maxTradeAmount: 100
+  tradeAmountUSDT: 20,
+  takeProfitPct: 10,
+  stopLossPct: -20
 };
 
 // Track trade history
@@ -107,11 +105,11 @@ async function monitorPositions() {
       );
 
       // 🚀 Close when reaching PnL target
-      if (pnlPercentage >= 10 || pnlPercentage <= -20) {
+      if (pnlPercentage >= RISK_CONFIG.takeProfitPct || pnlPercentage <= RISK_CONFIG.stopLossPct) {
         console.log(
           `⚠️ Closing ${
             position.symbol
-          } due to PnL threshold reached. (PnL: ${pnlPercentage.toFixed(2)}%)`
+          } due to PnL threshold reached. (PnL: ${pnlPercentage.toFixed(2)}% with ${leverage}x leverage)`
         );
 
         try {
@@ -162,28 +160,6 @@ async function monitorPositions() {
 }
 
 /**
- * Calculate position size based on account balance
- */
-async function calculatePositionSize() {
-  try {
-    const balance = await exchangeInstance.fetchBalance();
-    const availableUSDT = parseFloat(balance.USDT.free);
-    
-    // Calculate position size (2% of account)
-    const positionSize = (availableUSDT * RISK_CONFIG.maxAccountRiskPercent) / 100;
-    
-    // Clamp between min and max trade amounts
-    return Math.min(
-      Math.max(positionSize, RISK_CONFIG.minTradeAmount),
-      RISK_CONFIG.maxTradeAmount
-    );
-  } catch (err) {
-    console.error(`❌ Error calculating position size: ${err.message}`);
-    return RISK_CONFIG.minTradeAmount; // Fallback to minimum
-  }
-}
-
-/**
  * Calculate optimal leverage based on volatility
  */
 async function calculateLeverage(symbol) {
@@ -226,8 +202,8 @@ async function calculateAvailablePositionSize(symbol, leverage) {
         const currentPrice = ticker.last;
 
         // Calculate total position value (margin * leverage)
-        const totalPositionValue = RISK_CONFIG.minTradeAmount * leverage; // This will be 20 * 3 = 60 USDT
-        const requiredMargin = RISK_CONFIG.minTradeAmount; // This will be 20 USDT
+        const totalPositionValue = RISK_CONFIG.tradeAmountUSDT * leverage; // This will be 20 * 3 = 60 USDT
+        const requiredMargin = RISK_CONFIG.tradeAmountUSDT; // This will be 20 USDT
 
         if (availableUSDT < requiredMargin) {
             console.log(`⚠️ Insufficient margin: Need ${requiredMargin.toFixed(2)} USDT, have ${availableUSDT.toFixed(2)} USDT`);

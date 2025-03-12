@@ -381,7 +381,14 @@ async function startTrading() {
     console.log(`📊 Verified open positions: ${openPositions.length}/${RISK_CONFIG.maxPositions}`);
 
     if (openPositions.length >= RISK_CONFIG.maxPositions) {
-      console.log(`⚠️ At max positions (${openPositions.length}/${RISK_CONFIG.maxPositions}), skipping analysis`);
+      console.log('\n🔍 Max Positions Reached - Current PnLs:');
+      console.log('----------------------------------------');
+      openPositions.forEach(position => {
+          const pnlPercentage = ((position.markPrice - position.entryPrice) / position.entryPrice) * 100 * position.leverage;
+          console.log(`${position.symbol}: ${pnlPercentage >= 0 ? '✅' : '❌'} ${pnlPercentage.toFixed(2)}% | Entry: ${position.entryPrice} | Current: ${position.markPrice} | ${position.leverage}x`);
+      });
+      console.log('----------------------------------------');
+      console.log(`⚠️ At max positions (${openPositions.length}/${RISK_CONFIG.maxPositions}), skipping analysis\n`);
       return;
     }
 

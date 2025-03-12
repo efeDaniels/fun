@@ -389,46 +389,60 @@ async function findBestTradingPair() {
 async function startTrading() {
   console.log(`🚀 Starting Trading Bot...`);
 
-  // Single position monitoring interval
+  // Monitor positions every 100 seconds
   setInterval(async () => {
     try {
-      await monitorPositions(); // Monitor existing positions
-      await checkPositionThreshold(); // Update market analysis flag
+      await monitorPositions();
+    } catch (err) {
+      console.error("❌ Error monitoring positions:", err);
+    }
+  }, 100000); // Every 100 seconds
 
-      // Only proceed with analysis if we're not at max positions
-      if (shouldAnalyzeMarket) {
-        const tradeData = await findBestTradingPair();
-        if (!tradeData) return;
+  // Trading analysis loop
+  setInterval(async () => {
+    try {
+      // Get positions once and reuse the result
+      const openPositions = await getOpenPositions();
+      
+      // Update market analysis flag
+      if (openPositions.length >= RISK_CONFIG.maxPositions) {
+        shouldAnalyzeMarket = false;
+        return;
+      }
+      
+      shouldAnalyzeMarket = true;
 
-        const { bestPair, bestCandles, bestScore } = tradeData;
-        console.log(`✅ 👉 Best Pair: ${bestPair} (Score: ${bestScore})`);
+      // Rest of the trading logic...
+      const tradeData = await findBestTradingPair();
+      if (!tradeData) return;
+      
+      const { bestPair, bestCandles, bestScore } = tradeData;
+      console.log(`✅ 👉 Best Pair: ${bestPair} (Score: ${bestScore})`);
 
-        const tradeAmount = await getTradeAmount();
-        if (tradeAmount === 0) return;
+      const tradeAmount = await getTradeAmount();
+      if (tradeAmount === 0) return;
 
-        // One final position check before trade
-        const currentPositions = await getOpenPositions();
-        if (currentPositions.length >= RISK_CONFIG.maxPositions) {
-          console.log(`⚠️ Max positions reached during analysis, skipping trade`);
-          return;
-        }
+      // One final position check before trade
+      if (openPositions.length >= RISK_CONFIG.maxPositions) {
+        console.log(`⚠️ Max positions reached during analysis, skipping trade`);
+        return;
+      }
 
-        if (bestScore > 8) {  // For longs: score must be HIGHER than 7
-          console.log("🚀 Strong LONG signal detected");
-          await executeTrade(bestPair, "buy", tradeAmount, bestScore);
-          tradeStats.successful++;
-          tradeStats.totalProfit += bestScore;
-        } else if (bestScore < -8) {  // For shorts: score must be LOWER than -7
-          console.log("🚀 Strong SHORT signal detected");
-          await executeTrade(bestPair, "sell", tradeAmount, bestScore);
-          tradeStats.failed++;
-          tradeStats.totalProfit -= bestScore;
-        }
+      if (bestScore > 8) {  // For longs: score must be HIGHER than 7
+        console.log("🚀 Strong LONG signal detected");
+        await executeTrade(bestPair, "buy", tradeAmount, bestScore);
+        tradeStats.successful++;
+        tradeStats.totalProfit += bestScore;
+      } else if (bestScore < -8) {  // For shorts: score must be LOWER than -7
+        console.log("🚀 Strong SHORT signal detected");
+        await executeTrade(bestPair, "sell", tradeAmount, bestScore);
+        tradeStats.failed++;
+        tradeStats.totalProfit -= bestScore;
       }
     } catch (err) {
       console.error("❌ Error in trading loop:", err);
     }
-  }, 30000); // Run every 30 seconds instead
+  }, 60000); // Every minute
 
   process.on('unhandledRejection', (err) => {
     console.error('Unhandled rejection:', err);

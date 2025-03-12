@@ -276,17 +276,20 @@ class oxfun extends oxfun$1 {
                         'limit': 500,
                         'daysBack': 100000,
                         'untilDays': 7,
+                        'symbolRequired': false,
                     },
                     'fetchOrder': {
                         'marginMode': false,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                     },
                     'fetchOpenOrders': {
                         'marginMode': false,
                         'limit': undefined,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                     },
                     'fetchOrders': undefined,
                     'fetchClosedOrders': undefined,
@@ -2944,7 +2947,7 @@ class oxfun extends oxfun$1 {
                 'AccessKey': this.apiKey,
                 'Timestamp': datetime,
                 'Signature': signature,
-                'Nonce': nonce,
+                'Nonce': nonce.toString(),
             };
         }
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };

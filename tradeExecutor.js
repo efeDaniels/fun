@@ -1,5 +1,6 @@
 const ccxt = require("ccxt");
 require("dotenv").config();
+const tradeLogger = require('./tradeLogger');
 
 // Initialize exchange instance
 const exchangeInstance = new ccxt.bybit({
@@ -9,11 +10,16 @@ const exchangeInstance = new ccxt.bybit({
   options: { defaultType: "swap" }, // Ensure we use derivatives (if applicable)
 });
 
-// Bot Parameters
-const FIXED_TRADE_AMOUNT = 20; // Always trade exactly $20 per position
-const DEFAULT_LEVERAGE = 3; // Set default leverage
-const MAX_OPEN_POSITIONS = 4; // Limit total open positions
-const MAX_TRADES_PER_PAIR = 1; // Limit max trades per pair
+// Bot Risk Management Parameters
+const RISK_CONFIG = {
+  maxAccountRiskPercent: 2, // Max 2% account risk per trade
+  maxPositions: 4,
+  maxTradesPerPair: 1,
+  defaultLeverage: 3,
+  maxLeverage: 5,
+  minTradeAmount: 20,
+  maxTradeAmount: 100
+};
 
 // Track trade history
 const tradeHistory = [];
@@ -22,7 +28,7 @@ const activePairs = new Map(); // Track active trading pairs and their trade cou
 /**
  * Set leverage for a symbol (handles leverage modification error)
  */
-async function setLeverage(symbol, leverage = DEFAULT_LEVERAGE) {
+async function setLeverage(symbol, leverage = RISK_CONFIG.defaultLeverage) {
   try {
     await exchangeInstance.setLeverage(leverage, symbol);
     console.log(`✅ Leverage set to ${leverage}x for ${symbol}`);
@@ -108,6 +114,20 @@ async function monitorPositions() {
               closeOrder.side === "sell" ? "SHORT" : "LONG"
             } - Final PnL: ${pnlPercentage.toFixed(2)}%`
           );
+
+          // Log trade exit
+          await tradeLogger.logTradeExit({
+            pair: position.symbol,
+            side: position.side,
+            entryPrice: position.entryPrice,
+            exitPrice: markPrice,
+            amount: position.contracts,
+            leverage: position.leverage,
+            pnl: unrealizedPnL,
+            pnlPercent: pnlPercentage,
+            exitReason: `PnL target reached: ${pnlPercentage.toFixed(2)}%`,
+            entryTime: position.timestamp
+          });
         } catch (closeError) {
           console.error(
             `❌ Error closing ${position.symbol}:`,
@@ -127,77 +147,162 @@ async function monitorPositions() {
 }
 
 /**
- * Execute trade (ensures fixed $10 per trade & prevents multiple trades per pair)
+ * Calculate position size based on account balance
  */
-async function executeTrade(symbol, side) {
+async function calculatePositionSize() {
   try {
-    console.log(
-      `🛒 Attempting ${side.toUpperCase()} trade for ${symbol} with $${FIXED_TRADE_AMOUNT} margin`
+    const balance = await exchangeInstance.fetchBalance();
+    const availableUSDT = parseFloat(balance.USDT.free);
+    
+    // Calculate position size (2% of account)
+    const positionSize = (availableUSDT * RISK_CONFIG.maxAccountRiskPercent) / 100;
+    
+    // Clamp between min and max trade amounts
+    return Math.min(
+      Math.max(positionSize, RISK_CONFIG.minTradeAmount),
+      RISK_CONFIG.maxTradeAmount
     );
-
-    // Fetch active positions
-    const openPositions = await getOpenPositions();
-
-    // Enforce max open positions
-    if (openPositions.length >= MAX_OPEN_POSITIONS) {
-      console.log("⚠️ Max positions reached. Monitoring existing trades...");
-      return;
-    }
-
-    // Prevent multiple trades on the same pair
-    const currentTrades = activePairs.get(symbol) || 0;
-    if (currentTrades >= MAX_TRADES_PER_PAIR) {
-      console.log(
-        `⚠️ Skipping trade. Max trades (${MAX_TRADES_PER_PAIR}) reached for ${symbol}.`
-      );
-      return;
-    }
-
-    // Fetch market price
-    const ticker = await exchangeInstance.fetchTicker(symbol);
-    const price = ticker.last || ticker.close;
-
-    if (!price || price <= 0) {
-      console.log(`❌ Invalid market price for ${symbol}. Skipping trade.`);
-      return;
-    }
-
-    // Set leverage
-    await setLeverage(symbol, DEFAULT_LEVERAGE);
-
-    // Calculate total position size
-    let totalPositionSize = FIXED_TRADE_AMOUNT * DEFAULT_LEVERAGE; // Example: $10 margin * 5x = $50 position
-    let amount = totalPositionSize / price;
-
-    // Ensure amount meets exchange minimum
-    const market = exchangeInstance.market(symbol);
-    const minTradeSize = market.limits.amount.min || 1;
-    if (amount < minTradeSize) {
-      console.log(
-        `⚠️ Trade amount too low. Adjusting to minimum required (${minTradeSize})`
-      );
-      amount = minTradeSize;
-    }
-
-    // Execute market order
-    const order = await exchangeInstance.createOrder(
-      symbol,
-      "market",
-      side,
-      amount
-    );
-    console.log(
-      `✅ Trade executed: ${
-        order.id
-      } - ${side.toUpperCase()} ${amount} of ${symbol}`
-    );
-
-    // Track active trades
-    tradeHistory.push(order);
-    activePairs.set(symbol, currentTrades + 1); // Increment trade count for this pair
   } catch (err) {
-    console.error(`❌ Error executing trade: ${err.message}`);
+    console.error(`❌ Error calculating position size: ${err.message}`);
+    return RISK_CONFIG.minTradeAmount; // Fallback to minimum
   }
+}
+
+/**
+ * Calculate optimal leverage based on volatility
+ */
+async function calculateLeverage(symbol) {
+  try {
+    const candles = await exchangeInstance.fetchOHLCV(symbol, '1h', undefined, 24);
+    
+    // Calculate 24h volatility
+    const volatility = candles.reduce((sum, candle) => 
+      sum + Math.abs(candle[2] - candle[3]) / candle[4], 0) / candles.length;
+    
+    // Adjust leverage based on volatility
+    let leverage = RISK_CONFIG.defaultLeverage;
+    if (volatility > 0.05) leverage--; // High volatility -> lower leverage
+    if (volatility < 0.02) leverage++; // Low volatility -> higher leverage
+    
+    return Math.min(Math.max(leverage, 1), RISK_CONFIG.maxLeverage);
+  } catch (err) {
+    console.error(`❌ Error calculating leverage: ${err.message}`);
+    return RISK_CONFIG.defaultLeverage;
+  }
+}
+
+/**
+ * Calculate maximum possible position size based on available balance
+ */
+async function calculateAvailablePositionSize(symbol, leverage) {
+    try {
+        const balance = await exchangeInstance.fetchBalance();
+        const availableUSDT = parseFloat(balance.USDT.free);
+        
+        // Get current price
+        const ticker = await exchangeInstance.fetchTicker(symbol);
+        const currentPrice = ticker.last;
+
+        // Calculate total position value (margin * leverage)
+        const totalPositionValue = RISK_CONFIG.minTradeAmount * leverage; // This will be 20 * 3 = 60 USDT
+        const requiredMargin = RISK_CONFIG.minTradeAmount; // This will be 20 USDT
+
+        if (availableUSDT < requiredMargin) {
+            console.log(`⚠️ Insufficient margin: Need ${requiredMargin.toFixed(2)} USDT, have ${availableUSDT.toFixed(2)} USDT`);
+            return 0;
+        }
+
+        // Calculate contracts amount for the leveraged position size
+        const contractSize = totalPositionValue / currentPrice;
+        
+        console.log(`💰 Total Position Value: $${totalPositionValue}`);
+        console.log(`📊 Required Margin: ${requiredMargin.toFixed(2)} USDT`);
+        console.log(`📈 Contract Size: ${contractSize.toFixed(6)}`);
+
+        return contractSize;
+    } catch (err) {
+        console.error(`❌ Error calculating position size: ${err.message}`);
+        return 0;
+    }
+}
+
+/**
+ * Execute trade with dynamic position sizing and leverage
+ */
+async function executeTrade(symbol, side, amount, score, reasoning = []) {
+    try {
+        // Check existing positions first
+        if (activePairs.has(symbol)) {
+            console.log(`⚠️ Active position already exists for ${symbol}, skipping trade`);
+            return null;
+        }
+
+        if (activePairs.size >= RISK_CONFIG.maxPositions) {
+            console.log(`⚠️ Max positions (${RISK_CONFIG.maxPositions}) reached, skipping trade`);
+            return null;
+        }
+
+        // Get optimal leverage
+        const leverage = await calculateLeverage(symbol);
+        
+        // Calculate contract size
+        const contractSize = await calculateAvailablePositionSize(symbol, leverage);
+        
+        if (contractSize <= 0) {
+            console.log(`⚠️ Cannot calculate valid position size`);
+            return null;
+        }
+
+        console.log(
+            `🛒 Attempting ${side.toUpperCase()} trade for ${symbol}:`,
+            `\n💰 Contracts: ${contractSize}`,
+            `\n📊 Leverage: ${leverage}x`
+        );
+
+        // Execute market order with contract size
+        const order = await exchangeInstance.createOrder(
+            symbol,
+            "market",
+            side,
+            contractSize,
+            undefined,
+            {
+                reduceOnly: false,
+                closeOnTrigger: false,
+                leverage: leverage
+            }
+        );
+
+        console.log(
+            `✅ Trade executed: ${order.id} - ${side.toUpperCase()} ${contractSize} of ${symbol}`
+        );
+
+        // Add to active positions if successful
+        if (order) {
+            activePairs.set(symbol, {
+                side: side,
+                amount: contractSize,
+                entryPrice: order.price,
+                timestamp: new Date().getTime()
+            });
+
+            // Log trade entry with safe reasoning
+            await tradeLogger.logTradeEntry({
+                pair: symbol,
+                side: side,
+                price: order.price,
+                amount: contractSize,
+                leverage: leverage,
+                score: score,
+                reasoning: Array.isArray(reasoning) ? reasoning : [] // Ensure reasoning is an array
+            });
+        }
+
+        return order;
+    } catch (err) {
+        console.error(`❌ Error executing trade: ${err.message}`);
+        return null;
+    }
 }
 
 module.exports = {
@@ -205,5 +310,5 @@ module.exports = {
   tradeHistory,
   monitorPositions,
   getOpenPositions,
-  MAX_OPEN_POSITIONS,
+  RISK_CONFIG,
 };

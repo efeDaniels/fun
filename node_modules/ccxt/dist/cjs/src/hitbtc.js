@@ -319,12 +319,14 @@ class hitbtc extends hitbtc$1 {
                         'limit': 1000,
                         'daysBack': 100000,
                         'untilDays': 100000,
+                        'symbolRequired': false,
                         'marketType': true,
                     },
                     'fetchOrder': {
                         'marginMode': true,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                         'marketType': true,
                     },
                     'fetchOpenOrders': {
@@ -332,6 +334,7 @@ class hitbtc extends hitbtc$1 {
                         'limit': 1000,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                         'marketType': true,
                     },
                     'fetchOrders': undefined,
@@ -343,6 +346,7 @@ class hitbtc extends hitbtc$1 {
                         'untilDays': 100000,
                         'trigger': false,
                         'trailing': false,
+                        'symbolRequired': false,
                         'marketType': true,
                     },
                     'fetchOHLCV': {
@@ -1425,7 +1429,7 @@ class hitbtc extends hitbtc$1 {
         let fee = undefined;
         const feeCostString = this.safeString(trade, 'fee');
         const taker = this.safeValue(trade, 'taker');
-        let takerOrMaker = undefined;
+        let takerOrMaker;
         if (taker !== undefined) {
             takerOrMaker = taker ? 'taker' : 'maker';
         }

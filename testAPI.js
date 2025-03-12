@@ -1,3 +1,4 @@
+//THIS IS NOT BEING USED ON MAIN FUNCTIONS OF THE BOT, HERE JUST TO TEST THE API CONNECTION
 const ccxt = require('ccxt');
 require('dotenv').config();
 

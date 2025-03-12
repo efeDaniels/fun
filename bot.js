@@ -6,6 +6,7 @@ const {
   getOpenPositions,
   MAX_OPEN_POSITIONS,
 } = require("./tradeExecutor"); // ✅ Import getOpenPositions
+const { getSupportResistanceLevels } = require("./support_resistance");
 require("dotenv").config();
 
 // Exchange setup with rate limiting
@@ -23,6 +24,38 @@ const MAX_PAIRS_TO_ANALYZE = 150;
 const REQUEST_DELAY_MS = 200;
 
 let shouldAnalyzeMarket = true; // ✅ Flag to enable/disable market analysis
+
+const rateLimiter = {
+  lastCall: 0,
+  minInterval: REQUEST_DELAY_MS,
+  async throttle() {
+    const now = Date.now();
+    const timeToWait = this.lastCall + this.minInterval - now;
+    if (timeToWait > 0) {
+      await new Promise(resolve => setTimeout(resolve, timeToWait));
+    }
+    this.lastCall = Date.now();
+  }
+};
+
+// Define trusted pairs for trading
+const TRUSTED_PAIRS = [
+  "BTC/USDT:USDT",
+  "ETH/USDT:USDT",
+  "SOL/USDT:USDT",
+  "BNB/USDT:USDT",
+  "XRP/USDT:USDT",
+  "AVAX/USDT:USDT",
+  "MATIC/USDT:USDT",
+  "LINK/USDT:USDT",
+  "DOT/USDT:USDT",
+  "ADA/USDT:USDT",
+  "ATOM/USDT:USDT",
+  "UNI/USDT:USDT",
+  "AAVE/USDT:USDT",
+  "ARB/USDT:USDT",
+  "OP/USDT:USDT"
+];
 
 /**
  * Check if the number of open positions is at the threshold
@@ -58,42 +91,38 @@ async function getTradeAmount() {
 async function getTopTradingPairs() {
   try {
     const markets = await exchangeInstance.loadMarkets();
-    const usdtPairs = Object.keys(markets).filter((pair) =>
-      pair.endsWith("/USDT:USDT")
-    );
-
-    console.log(
-      `🔍 Found ${usdtPairs.length} USDT pairs. Fetching volume data...`
-    );
+    
+    // Only analyze trusted pairs that exist on the exchange
+    const availablePairs = TRUSTED_PAIRS.filter(pair => pair in markets);
+    
+    console.log(`🔍 Analyzing ${availablePairs.length} trusted pairs...`);
 
     const volumeData = [];
-    for (const pair of usdtPairs) {
+    for (const pair of availablePairs) {
       try {
-        await new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY_MS));
-
+        await rateLimiter.throttle();
         const ticker = await exchangeInstance.fetchTicker(pair);
-        const baseVolume =
-          ticker.baseVolume || parseFloat(ticker.info?.volume24h) || 0;
-        const quoteVolume =
-          ticker.quoteVolume || parseFloat(ticker.info?.turnover24h) || 0;
-        const selectedVolume = quoteVolume;
+        const quoteVolume = ticker.quoteVolume || parseFloat(ticker.info?.turnover24h) || 0;
 
-        volumeData.push({ pair, volume: selectedVolume });
+        volumeData.push({ 
+          pair, 
+          volume: quoteVolume,
+          price: ticker.last,
+          spread: ticker.ask - ticker.bid
+        });
       } catch (err) {
         console.warn(`⚠️ Skipping ${pair} due to error: ${err.message}`);
       }
     }
 
-    const validPairs = volumeData.filter((data) => data.volume > 10_000);
-    if (validPairs.length < 50) {
-      console.warn(`⚠️ Only ${validPairs.length} pairs meet volume criteria.`);
-    }
+    // Stricter volume and spread filters for major pairs
+    const validPairs = volumeData.filter(data => 
+      data.volume > 50_000 && // Higher min volume
+      ((data.spread / data.price) < 0.001) // Max 0.1% spread
+    );
 
-    const shuffledPairs = validPairs.sort(() => 0.5 - Math.random());
-    const selectedPairs = shuffledPairs.slice(0, 50).map((data) => data.pair);
-
-    console.log(`✅ Selected ${selectedPairs.length} Pairs for Trading.`);
-    return selectedPairs;
+    console.log(`✅ Found ${validPairs.length} pairs meeting criteria`);
+    return validPairs.map(data => data.pair);
   } catch (err) {
     console.error("❌ Error fetching trading pairs:", err.message);
     return [];
@@ -105,7 +134,7 @@ async function getTopTradingPairs() {
  */
 async function fetchCandles(symbol) {
   try {
-    await new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY_MS));
+    await rateLimiter.throttle();
 
     const ohlcv = await exchangeInstance.fetchOHLCV(
       symbol,
@@ -137,6 +166,27 @@ async function fetchCandles(symbol) {
 }
 
 /**
+ * Check market health
+ */
+async function checkMarketHealth(candles) {
+  const lastCandle = candles[candles.length - 1];
+  const firstCandle = candles[0];
+  
+  // Calculate volatility
+  const volatility = candles.reduce((sum, candle) => 
+    sum + Math.abs(candle.high - candle.low) / candle.low, 0) / candles.length;
+  
+  // Calculate trend strength
+  const trendStrength = Math.abs(lastCandle.close - firstCandle.close) / firstCandle.close;
+  
+  return {
+    isHealthy: volatility < 0.03 && trendStrength < 0.15,
+    volatility,
+    trendStrength
+  };
+}
+
+/**
  * Find the best trading pair based on signals, volume, and spread
  */
 async function findBestTradingPair() {
@@ -163,12 +213,13 @@ async function findBestTradingPair() {
         try {
           console.log(`🔍 Analyzing ${pair}...`);
 
-          await new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY_MS));
+          await rateLimiter.throttle();
           const ticker = await exchangeInstance.fetchTicker(pair);
           if (!ticker || !ticker.last) return null;
 
           const volume = ticker.quoteVolume || ticker.baseVolume || 0;
           const spread = ticker.ask - ticker.bid;
+          const currentPrice = ticker.last;
           let reasoning = [];
 
           if (volume < 10_000) return null;
@@ -177,37 +228,94 @@ async function findBestTradingPair() {
           const candles = await fetchCandles(pair);
           if (!candles.length) return null;
 
-          const signal = generateTrendSignal(candles);
-          if (!signal) return null;
+          // Get technical analysis data
+          const analysis = generateTrendSignal(candles);
+          if (!analysis.indicators) return null;
 
-          let score = 0;
+          let score = analysis.technicalScore.score;
+          reasoning = [...analysis.technicalScore.reasons];
 
-          if (signal === "BUY") {
-            score += 3;
-            reasoning.push("✅ Buy signal detected (+3)");
-          } else if (signal === "SELL") {
-            score -= 3;
-            reasoning.push("✅ Sell signal detected (-3)");
+          // Add market condition scores
+          const volumeScore = Math.min(Math.log10(volume/10000), 3);
+          if (score > 0) {
+            score += volumeScore;
+            reasoning.push(`High volume supports LONG +${volumeScore.toFixed(2)}`);
+          } else if (score < 0) {
+            score -= volumeScore;
+            reasoning.push(`High volume supports SHORT -${volumeScore.toFixed(2)}`);
           }
 
+          // Spread score
           if (spread < 0.2) {
-            if (signal === "BUY") {
+            if (score > 0) {
               score += 1;
               reasoning.push("✅ Low spread benefits LONG (+1)");
-            } else if (signal === "SELL") {
+            } else if (score < 0) {
               score -= 1;
               reasoning.push("❌ Low spread weakens SHORT (-1)");
             }
-          } else {
-            reasoning.push("⚠️ High spread detected (No score impact)");
           }
 
+          // Volume bonus
           if (volume > 40_000) {
-            score += signal === "BUY" ? 2 : -2;
+            if (score > 0) {
+              score += 2;
+              reasoning.push("High volume bonus for LONG +2");
+            } else if (score < 0) {
+              score -= 2;
+              reasoning.push("High volume penalty for SHORT -2");
+            }
           }
 
-          console.log(`📝 ${pair} Score: ${score}`);
-          return { pair, score, candles };
+          // Get S/R levels
+          const srLevels = await getSupportResistanceLevels(pair, "4h");
+          
+          let nearestSupport = srLevels.support
+            .filter(s => s.price < currentPrice)
+            .sort((a, b) => b.price - a.price)[0];
+
+          let nearestResistance = srLevels.resistance
+            .filter(r => r.price > currentPrice)
+            .sort((a, b) => a.price - b.price)[0];
+
+          // Score based on proximity to S/R
+          if (nearestSupport) {
+            const supportDistance = (currentPrice - nearestSupport.price) / currentPrice;
+            if (supportDistance < 0.02) { // Within 2% of support
+              if (score > 0) {
+                score += nearestSupport.strength;
+                reasoning.push(`✅ Near strong support +${nearestSupport.strength}`);
+              }
+            }
+          }
+
+          if (nearestResistance) {
+            const resistanceDistance = (nearestResistance.price - currentPrice) / currentPrice;
+            if (resistanceDistance < 0.02) { // Within 2% of resistance
+              if (score < 0) {
+                score -= nearestResistance.strength;
+                reasoning.push(`✅ Near strong resistance -${nearestResistance.strength}`);
+              }
+            }
+          }
+
+          // Final score adjustments
+          if (nearestSupport && nearestResistance) {
+            const range = Math.abs(nearestResistance.price - nearestSupport.price) / currentPrice;
+            if (range < 0.02 && nearestSupport.strength >= 3 && nearestResistance.strength >= 3) {
+              score *= 0.5;
+              reasoning.push("Choppy market between S/R (Score halved)");
+            }
+          }
+
+          console.log(`📝 ${pair} Final Score: ${score.toFixed(2)} | ${reasoning.join(" | ")}`);
+          return { 
+            pair, 
+            score, 
+            candles, 
+            reasoning,
+            indicators: analysis.indicators 
+          };
         } catch (err) {
           console.warn(`⚠️ Skipping ${pair} due to error: ${err.message}`);
           return null;
@@ -223,10 +331,10 @@ async function findBestTradingPair() {
 
     for (const trade of allResults) {
       if (bestTrade.score >= 0 && trade.score > bestTrade.score) {
-        bestTrade = trade; // Pick strongest long
+        bestTrade = trade; // Pick strongest long (higher is better)
       }
       if (bestTrade.score < 0 && trade.score < bestTrade.score) {
-        bestTrade = trade; // Pick strongest short
+        bestTrade = trade; // Pick strongest short (lower is better)
       }
     }
 
@@ -260,33 +368,45 @@ async function startTrading() {
     }
 
     const tradeData = await findBestTradingPair();
-    if (!tradeData) {
-      console.log("ℹ️ No suitable trading pair found. Retrying...");
-      return;
-    }
+    if (!tradeData) return;
 
     const { bestPair, bestCandles, bestScore } = tradeData;
-    console.log(`✅ 👉 Best Pair: ${bestPair}`);
-
-    if (bestScore > -2 && bestScore < 2) {
-      console.log(
-        `⚠️ Best pair score (${bestScore}) is too low. Skipping trade.`
-      );
-      return;
-    }
+    console.log(`✅ 👉 Best Pair: ${bestPair} (Score: ${bestScore})`);
 
     const tradeAmount = await getTradeAmount();
     if (tradeAmount === 0) return;
 
-    const signal = generateTrendSignal(bestCandles);
-    console.log(`📢 Trade Signal for ${bestPair}: ${signal}`);
-
-    if (signal === "BUY") {
+    if (bestScore > 2) {
+      console.log("🚀 Strong LONG signal detected");
       await executeTrade(bestPair, "buy", tradeAmount);
-    } else if (signal === "SELL") {
+    } else if (bestScore < -2) {
+      console.log("🚀 Strong SHORT signal detected");
       await executeTrade(bestPair, "sell", tradeAmount);
+    } else {
+      console.log("⚠️ No strong signals detected");
     }
   }, 60000);
+
+  process.on('unhandledRejection', (err) => {
+    console.error('Unhandled rejection:', err);
+    // Attempt reconnect after 1 minute
+    setTimeout(() => {
+      console.log('Attempting recovery...');
+      startTrading();
+    }, 60000);
+  });
+
+  // Log performance every hour
+  setInterval(() => {
+    console.log(`
+      📊 Performance Report:
+      Successful Trades: ${trades.successful}
+      Failed Trades: ${trades.failed}
+      Win Rate: ${(trades.successful/(trades.successful+trades.failed)*100).toFixed(2)}%
+      Total Profit: $${trades.totalProfit.toFixed(2)}
+    `);
+  }, 3600000);
 }
 
 startTrading();
+

@@ -18,7 +18,9 @@
   },
   "homepage": "https://github.com/efeDaniels/fun#readme",
   "dependencies": {
-    "ccxt": "^4.4.53",
+    "ccxt": "^4.4.65",
+    "csv-parser": "^3.2.0",
+    "csv-writer": "^1.6.0",
     "dotenv": "^16.4.7",
     "pm2": "^5.4.3"
   }

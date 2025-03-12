@@ -376,6 +376,12 @@ async function findBestTradingPair() {
 async function startTrading() {
   console.log(`🚀 Starting Trading Bot...`);
 
+  // Add position monitoring interval
+  setInterval(async () => {
+    await monitorPositions();
+  }, 10000); // Check every 10 seconds
+
+  // Existing trading interval
   setInterval(async () => {
     const openPositions = await getOpenPositions();
     console.log(`📊 Verified open positions: ${openPositions.length}/${RISK_CONFIG.maxPositions}`);

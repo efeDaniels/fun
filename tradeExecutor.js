@@ -16,7 +16,7 @@ const RISK_CONFIG = {
   maxTradesPerPair: 1,
   defaultLeverage: 3,
   tradeAmountUSDT: 20,
-  takeProfitPct: 10,
+  takeProfitPct: 5,
   stopLossPct: -20
 };
 
@@ -29,28 +29,30 @@ const activePairs = new Map(); // Track active trading pairs and their trade cou
  */
 async function setLeverage(symbol, leverage = RISK_CONFIG.defaultLeverage) {
   try {
-    // Format symbol for Bybit (remove :USDT and /)
-    const formattedSymbol = symbol.replace('/USDT:USDT', 'USDT');
-    
-    // Set leverage using proper Bybit format
-    await exchangeInstance.setLeverage(leverage, formattedSymbol, {
-      marginMode: 'isolated',  // Explicitly set isolated margin
-      leverage: leverage,      // Explicitly set leverage value
-      symbol: formattedSymbol // Pass formatted symbol
-    });
-
-    // Verify leverage was set
+    // Check current leverage first
     const positions = await exchangeInstance.fetchPositions([symbol]);
     const currentLeverage = positions[0]?.leverage;
     
-    if (currentLeverage !== leverage) {
-      throw new Error(`Leverage not set correctly. Wanted: ${leverage}x, Got: ${currentLeverage}x`);
+    // If leverage is already set correctly, skip setting it again
+    if (currentLeverage === leverage) {
+      console.log(`✅ Leverage already set at ${leverage}x for ${symbol}`);
+      return;
     }
 
-    console.log(`✅ Leverage verified at ${leverage}x for ${symbol}`);
+    // Format symbol for Bybit (remove :USDT and /)
+    const formattedSymbol = symbol.replace('/USDT:USDT', 'USDT');
+    
+    // Set leverage only if it needs to change
+    await exchangeInstance.setLeverage(leverage, formattedSymbol, {
+      marginMode: 'isolated',
+      leverage: leverage,
+      symbol: formattedSymbol
+    });
+
+    console.log(`✅ Leverage changed to ${leverage}x for ${symbol}`);
   } catch (err) {
     console.error(`❌ Error setting leverage for ${symbol}:`, err.message);
-    throw err; // Re-throw to prevent trade with wrong leverage
+    throw err;
   }
 }
 
@@ -71,64 +73,55 @@ async function getOpenPositions() {
 
 async function monitorPositions() {
   try {
-    console.log("🔍 Monitoring active positions...");
-
     const positions = await exchangeInstance.fetchPositions();
-    const openPositions = positions.filter(
-      (pos) => parseFloat(pos.contracts) > 0
-    );
+    const openPositions = positions.filter(pos => parseFloat(pos.contracts) > 0);
 
-    console.log(`📊 Active Positions: ${openPositions.length}`);
+    // If no open positions, skip monitoring
+    if (openPositions.length === 0) {
+      return;
+    }
 
+    console.log("\n🔍 Monitoring Active Positions:");
+    console.log('----------------------------------------');
+    openPositions.forEach(position => {
+      const entryPrice = parseFloat(position.entryPrice);
+      const markPrice = parseFloat(position.markPrice);
+      const leverage = parseFloat(position.leverage);
+      const pnlPercentage = ((markPrice - entryPrice) / entryPrice) * 100 * leverage;
+      
+      console.log(`${position.symbol}: ${pnlPercentage >= 0 ? '✅' : '❌'} ${pnlPercentage.toFixed(2)}% | Entry: ${position.entryPrice} | Current: ${position.markPrice} | ${position.leverage}x`);
+    });
+    console.log('----------------------------------------');
+
+    // Rest of monitoring logic...
     for (const position of openPositions) {
       const entryPrice = parseFloat(position.entryPrice);
       const markPrice = parseFloat(position.markPrice);
-      const unrealizedPnL = parseFloat(position.unrealizedPnl);
-      const contracts = parseFloat(position.contracts);
       const leverage = parseFloat(position.leverage);
+      const pnlPercentage = ((markPrice - entryPrice) / entryPrice) * 100 * leverage;
 
-      // ✅ Properly format symbol for Bybit API
-      const formattedSymbol = position.symbol
-        .replace("/", "")
-        .replace(":USDT", "");
-
-      // ✅ Correct PnL Calculation (Using Margin)
-      const marginUsed = (entryPrice * contracts) / leverage;
-      const pnlPercentage = (unrealizedPnL / marginUsed) * 100;
-
-      console.log(
-        `🔹 ${
-          position.symbol
-        }: Entry ${entryPrice}, Mark ${markPrice}, Unrealized PnL: ${unrealizedPnL.toFixed(
-          4
-        )} USDT (${pnlPercentage.toFixed(2)}%)`
-      );
-
-      // 🚀 Close when reaching PnL target
       if (pnlPercentage >= RISK_CONFIG.takeProfitPct || pnlPercentage <= RISK_CONFIG.stopLossPct) {
         console.log(
-          `⚠️ Closing ${
-            position.symbol
-          } due to PnL threshold reached. (PnL: ${pnlPercentage.toFixed(2)}% with ${leverage}x leverage)`
+          `🎯 Taking ${pnlPercentage >= 0 ? 'PROFIT' : 'LOSS'} on ${position.symbol} (PnL: ${pnlPercentage.toFixed(2)}% with ${leverage}x)`
         );
 
         try {
           const closeOrder = await exchangeInstance.createOrder(
-            formattedSymbol,
+            position.symbol,
             "market",
-            position.side === "long" ? "sell" : "buy", // Flip side to close
-            contracts,
+            position.side === "long" ? "sell" : "buy",
+            position.contracts,
             undefined,
-            { reduceOnly: true } // Ensure it's a close order
+            { reduceOnly: true }
           );
 
           console.log(
-            `✅ Position Closed: ${formattedSymbol} - ${
-              closeOrder.side === "sell" ? "SHORT" : "LONG"
-            } - Final PnL: ${pnlPercentage.toFixed(2)}%`
+            `✅ Position Closed Successfully:\n` +
+            `   ${position.symbol} | ${position.side.toUpperCase()}\n` +
+            `   Entry: ${entryPrice} → Exit: ${markPrice}\n` +
+            `   Final PnL: ${pnlPercentage.toFixed(2)}%`
           );
 
-          // Log trade exit
           await tradeLogger.logTradeExit({
             pair: position.symbol,
             side: position.side,
@@ -136,23 +129,15 @@ async function monitorPositions() {
             exitPrice: markPrice,
             amount: position.contracts,
             leverage: position.leverage,
-            pnl: unrealizedPnL,
+            pnl: pnlPercentage,
             pnlPercent: pnlPercentage,
-            exitReason: `PnL target reached: ${pnlPercentage.toFixed(2)}%`,
+            exitReason: `${pnlPercentage >= 0 ? 'Take Profit' : 'Stop Loss'} at ${pnlPercentage.toFixed(2)}%`,
             entryTime: position.timestamp
           });
         } catch (closeError) {
-          console.error(
-            `❌ Error closing ${position.symbol}:`,
-            closeError.message
-          );
+          console.error(`❌ Failed to close ${position.symbol}: ${closeError.message}`);
         }
       }
-    }
-
-    // Fixed: Use RISK_CONFIG.maxPositions instead of hardcoded 5
-    if (openPositions.length >= RISK_CONFIG.maxPositions) {
-      console.log(`⚠️ Max positions (${RISK_CONFIG.maxPositions}) reached! Prioritizing PnL monitoring.`);
     }
   } catch (err) {
     console.error(`❌ Error monitoring positions: ${err.message}`);

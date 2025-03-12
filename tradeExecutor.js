@@ -231,9 +231,15 @@ async function calculateAvailablePositionSize(symbol, leverage) {
  */
 async function executeTrade(symbol, side, amount, score, reasoning = []) {
     try {
-        // Check existing positions first
-        if (activePairs.has(symbol)) {
-            console.log(`⚠️ Active position already exists for ${symbol}, skipping trade`);
+        // Check existing positions from exchange first
+        const positions = await exchangeInstance.fetchPositions([symbol]);
+        const existingPosition = positions.find(pos => 
+            pos.symbol === symbol && 
+            Math.abs(pos.contracts) > 0
+        );
+
+        if (existingPosition) {
+            console.log(`⚠️ Active position already exists for ${symbol} (Size: ${existingPosition.contracts}), skipping trade`);
             return null;
         }
 

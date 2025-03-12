@@ -92,10 +92,17 @@ async function getTopTradingPairs() {
   try {
     const markets = await exchangeInstance.loadMarkets();
     
-    // Only analyze trusted pairs that exist on the exchange
-    const availablePairs = TRUSTED_PAIRS.filter(pair => pair in markets);
+    // Get current open positions
+    const openPositions = await getOpenPositions();
+    const openPositionPairs = new Set(openPositions.map(pos => pos.symbol));
     
-    console.log(`🔍 Analyzing ${availablePairs.length} trusted pairs...`);
+    // Filter out pairs we already have positions in
+    const availablePairs = TRUSTED_PAIRS.filter(pair => 
+        pair in markets && 
+        !openPositionPairs.has(pair)
+    );
+    
+    console.log(`🔍 Analyzing ${availablePairs.length} available pairs (${openPositionPairs.size} pairs excluded due to open positions)...`);
 
     const volumeData = [];
     for (const pair of availablePairs) {

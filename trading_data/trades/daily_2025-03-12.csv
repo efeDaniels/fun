@@ -1,3 +1,2 @@
 Timestamp      ,Pair           ,Type           ,Side           ,Entry_Price    ,Exit_Price     ,Contracts      ,Leverage       ,PnL_USDT       ,PnL_%          ,Score          ,Reason         ,Duration_Hours ,Market_Volume  ,Volatility_24h ,Market_Trend   ,Funding_Rate   ,Open_Interest  ,Liquidations_24h,Risk_Reward    ,Max_Drawdown   ,Profit_Factor  ,Sharpe_Ratio   ,Market_Cap     ,BTC_Dominance  ,Key_Indicators 
-2025-03-12T18:11:43.530Z,BNB/USDT:USDT,ENTRY,buy,,,0.1073,3,,,9.15,,,,,,,,,,,,,,,{}
-2025-03-12T18:12:37.482Z,OP/USDT:USDT,ENTRY,buy,,,70.2576,3,,,9.00,,,,,,,,,,,,,,,{}
+2025-03-12T20:24:58.172Z,SOL/USDT:USDT,ENTRY,sell,,,0.4820,3,,,-8.00,,,,,,,,,,,,,,,{}

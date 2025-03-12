@@ -1,126 +1,125 @@
-# Bybit Futures Trading Bot
+# WTF IS THAT
 
-A focused **Bybit Futures Trading Bot** that trades major cryptocurrency pairs using technical analysis, support/resistance levels, and a comprehensive scoring system. Built with risk management and reliability in mind.
+Well made this bot cause I was tired of getting rekt by garbage signals and overleverage. So I told myself, why I'm not getting rekt by something I did? And here we are. It trades BTC, ETH, SOL and other actual coins (none of that low cap BS) on Bybit futures. Uses legit TA and doesn't ape in like a degen.
 
----
+# WTF IT DOES
 
-## Key Features
+- Only trades real coins cause shitcoins will rek you
+- Uses proper TA (EMAs, RSI, MACD, ADX) to catch trends
+- Spots legit support/resistance levels
+- Smart scoring system that isn't total BS
+- Position sizing that won't blow up your account (2% risk per trade)
+- Leverage that makes sense (1-5x max, no 100x degen stuff)
+- Risk management that'll keep you alive:
+  - Max 4 positions open
+  - Takes profit at given PnL
+  - Cuts losses at given PnL
+  - One trade per pair (don't get greedy)
 
-- **Selective Trading**: Trades only established cryptocurrencies (BTC, ETH, SOL, etc.)
-- **Technical Analysis**: Uses EMA, RSI, MACD, and ADX for trend confirmation
-- **Support/Resistance**: Incorporates S/R levels for better entry/exit points
-- **Smart Scoring System**: Multi-factor scoring for trade evaluation
-- **Dynamic Position Sizing**: Risk-based position sizing (2% account risk per trade)
-- **Smart Leverage**: Adjusts leverage (1x-5x) based on market volatility
-- **Risk Management**: 
-  - Maximum 4 open positions
-  - Take profit at +10%
-  - Stop loss at -20%
-  - Maximum 1 trade per pair
+## How It Actually Works
 
----
+### The TA Part
+- EMA crossovers (50/200 - yeah basic but works)
+- MACD (when it actually crosses, not that fake stuff)
+- RSI: 
+  - Oversold (<30): Strong buy signal (+2)
+  - Overbought (>70): Strong sell signal (-2)
+  - Above 50: Bullish (+1)
+  - Below 50: Bearish (-1)
+- ADX above 20 (no choppy market BS)
 
-## Trading Strategy
+### Market Stuff That Matters
+- Need decent volume
+- Spread can't be garbage
+- S/R levels that aren't just random lines
 
-### 1. Technical Indicators
-- EMA (50 & 200) crossover
-- MACD crossover & direction
-- RSI confirmation (35-75 for longs, <60 for shorts)
-- ADX > 20 (ensures strong trend)
+### The Scoring System
 
-### 2. Market Conditions
-- Minimum $50k 24h volume
-- Maximum 0.1% spread
-- Support/Resistance level confirmation
+Bot scores trades from -15 to +15. Here's the juice:
 
-### 3. Scoring System
+Volume Points (±4):
+- Under 100k = nah fam (dead market)
+- 100k-500k = ±1 (decent)
+- 500k-2M = ±2 (now we're talking)
+- 2M-5M = ±3 (getting spicy)
+- 5M+ = ±4 (absolute unit)
 
-The bot uses a comprehensive scoring system (±9 points max) considering:
+Spread Points (±1):
+- Under 0.1% = ±1
+- Over = nah
 
-#### Volume Score (±3 points)
-- 10,000 USDT = 0 points
-- 100,000 USDT = ±1 point
-- 1,000,000 USDT = ±2 points
-- 10,000,000+ USDT = ±3 points
+S/R Points (±3):
+- Stronger levels = better score
+- Closer = better score
+- Strong nearby support = +3 for longs
+- Strong nearby resistance = -3 for shorts
 
-#### Spread Score (±1 point)
-- < 0.1% spread = ±1 point
-- ≥ 0.1% spread = 0 points
+Technical Points (±6):
+- EMA crossover = ±2
+- MACD cross + trend = ±2
+- RSI signals = ±2
 
-#### Support/Resistance Score (±3 points)
-- Based on level strength and proximity
-- Stronger levels = higher score
-- Closer proximity = higher score
-- Example: Strong support nearby = +3 for longs
+Won't Trade When:
+- Market's being weird between S/R
+- Range is too tight with strong levels
+- Score too weak (need conviction fam)
 
-#### Trend Strength (ADX) Score (±2 points)
-- ADX 25 = 0 points
-- ADX 35 = ±1 point
-- ADX 45+ = ±2 points
+### Real Examples
 
-#### Market Condition Penalties
-- Choppy market between S/R = Score halved
-- Range < 2% with strong S/R = Score reduced
-
-### Example Scenarios
-
-**Perfect LONG Signal (+9):**
+Perfect Long Setup (+15):
 ```json
 {
-    "volumeScore": "+3",    // High volume
-    "spreadScore": "+1",    // Tight spread
-    "supportScore": "+3",   // Strong support
-    "trendScore": "+2",     // Strong ADX
-    "total": "+9"          // Very strong long
+    "volumeScore": "+4",    // monster volume
+    "spreadScore": "+1",    // clean spread
+    "supportScore": "+3",   // solid support
+    "technicalScore": "+6", // all systems go
+    "trendScore": "+1",     // trending nicely
+    "total": "+15"         // chef's kiss
 }
 ```
 
-**Perfect SHORT Signal (-9):**
+Perfect Short Setup (-15):
 ```json
 {
-    "volumeScore": "-3",    // High volume
-    "spreadScore": "-1",    // Tight spread
-    "resistanceScore": "-3", // Strong resistance
-    "trendScore": "-2",     // Strong ADX
-    "total": "-9"          // Very strong short
+    "volumeScore": "-4",    // massive volume
+    "spreadScore": "-1",    // tight spread
+    "resistanceScore": "-3", // brick wall above
+    "technicalScore": "-6",  // everything bearish
+    "trendScore": "-1",     // dumping hard
+    "total": "-15"         // short it
 }
 ```
 
-Trade execution requires:
-- Long positions: Score > +2
-- Short positions: Score < -2
-- Higher absolute scores = stronger signals
+Bot only trades when:
+- Longs: Above +9 (need that conviction)
+- Shorts: Below -9 (same deal)
+Higher score = stronger setup = more likely to print
 
----
+## Setting It Up
 
-## Installation
-
-### 1- Clone the Repository
+1. Clone it:
 ```bash
 git clone https://github.com/efeDaniels/fun.git
 cd trading-bot
 ```
 
-### 2- Install Dependencies
+2. Install stuff:
 ```bash
 npm install
 ```
 
-### 3- Configure Environment
-Create a `.env` file:
+3. Set up your keys:
+Make a .env file:
 ```plaintext
 API_KEY=your_bybit_api_key
 API_SECRET=your_bybit_api_secret
 ```
 
-Get your API credentials from [Bybit API Management](https://www.bybit.com/app/user/api-management)
+Get API keys from Bybit's site
 
----
+## What It Trades
 
-## How It Works
-
-### Trading Pairs
-Only trades established cryptocurrencies:
+Sticks to coins that actually matter:
 - BTC/USDT
 - ETH/USDT
 - SOL/USDT
@@ -128,72 +127,44 @@ Only trades established cryptocurrencies:
 - XRP/USDT
 - AVAX/USDT
 - MATIC/USDT
-- And other major pairs
+- Other major pairs that aren't trash
 
-### Entry Conditions
-1. **Technical Indicators**:
-   - EMA (50 & 200) crossover
-   - MACD crossover & direction
-   - RSI confirmation (35-75 for longs, <60 for shorts)
-   - ADX > 20 (ensures strong trend)
+## Running It
 
-2. **Market Conditions**:
-   - Minimum $50k 24h volume
-   - Maximum 0.1% spread
-   - Support/Resistance level confirmation
-
-### Position Management
-- **Position Size**: 2% of account balance (min $20, max $100)
-- **Leverage**: Dynamic 1x-5x based on volatility
-- **Take Profit**: +10% unrealized PnL
-- **Stop Loss**: -20% unrealized PnL
-- **Maximum Risk**: 4 concurrent positions
-
----
-
-## Running the Bot
-
-Start the bot:
+Basic start:
 ```bash
 node bot.js
 ```
 
-For 24/7 operation using PM2:
+For running 24/7 (use PM2):
 ```bash
 pm2 start bot.js --name "trading-bot"
 ```
 
-Monitor logs:
+Check what it's doing:
 ```bash
 pm2 logs trading-bot
 ```
 
-Stop the bot:
+Kill it:
 ```bash
 pm2 stop trading-bot
 ```
 
----
+## Important Files
+- `bot.js`: Main stuff
+- `trendStrategy.js`: TA logic
+- `tradeExecutor.js`: Handles orders
+- `support_resistance.js`: Finds S/R levels
 
-## Core Files
+## Gang Shit No Lame Shit
 
-- **`bot.js`**: Main entry point, market analysis and scoring system
-- **`trendStrategy.js`**: Technical analysis and signal generation
-- **`tradeExecutor.js`**: Order execution and position management
-- **`support_resistance.js`**: Support/Resistance level detection
+Look, this bot works but trading's still risky af. Some real talk:
+- Test it first
+- Start small
+- Don't trade money you need
+- Watch it like a hawk
+- Past trades don't mean shit for future ones
+- This shit only loses, don't expect any profits
 
----
-
-## ⚠️ Risk Warning
-
-This bot is for educational purposes. Cryptocurrency trading involves substantial risk. Always:
-- Test in testnet first
-- Start with small amounts
-- Never trade more than you can afford to lose
-- Monitor the bot's performance regularly
-- Understand that past performance doesn't guarantee future results
-
----
-
-
-
+Made this for learning - don't blame me if you blow up your account being dumb. Hawkkk Tuaaah!

@@ -253,14 +253,27 @@ async function findBestTradingPair() {
           let score = analysis.technicalScore.score;
           reasoning = [...analysis.technicalScore.reasons];
 
-          // Add market condition scores
-          const volumeScore = Math.min(Math.log10(volume/10000), 3);
-          if (score > 0) {
-            score += volumeScore;
-            reasoning.push(`High volume supports LONG +${volumeScore.toFixed(2)}`);
-          } else if (score < 0) {
-            score -= volumeScore;
-            reasoning.push(`High volume supports SHORT -${volumeScore.toFixed(2)}`);
+          // Volume scoring based on discrete bands
+          const volumeBands = [
+            { min: 100_000, max: 500_000, points: 1, label: "Decent" },
+            { min: 500_000, max: 2_000_000, points: 2, label: "High" },
+            { min: 2_000_000, max: 5_000_000, points: 3, label: "Very High" },
+            { min: 5_000_000, max: Infinity, points: 4, label: "Exceptional" }
+          ];
+
+          let volumeScore = 0;
+          for (const band of volumeBands) {
+            if (volume >= band.min && volume < band.max) {
+              volumeScore = band.points;
+              if (score > 0) {
+                score += volumeScore;
+                reasoning.push(`${band.label} volume supports LONG +${volumeScore}`);
+              } else if (score < 0) {
+                score -= volumeScore; // Makes score more negative for shorts
+                reasoning.push(`${band.label} volume strengthens SHORT -${volumeScore}`);
+              }
+              break;
+            }
           }
 
           // Spread score
@@ -376,58 +389,46 @@ async function findBestTradingPair() {
 async function startTrading() {
   console.log(`🚀 Starting Trading Bot...`);
 
-  // Add position monitoring interval
+  // Single position monitoring interval
   setInterval(async () => {
-    await monitorPositions();
-  }, 10000); // Check every 10 seconds
+    try {
+      await monitorPositions(); // Monitor existing positions
+      await checkPositionThreshold(); // Update market analysis flag
 
-  // Existing trading interval
-  setInterval(async () => {
-    const openPositions = await getOpenPositions();
-    console.log(`📊 Verified open positions: ${openPositions.length}/${RISK_CONFIG.maxPositions}`);
+      // Only proceed with analysis if we're not at max positions
+      if (shouldAnalyzeMarket) {
+        const tradeData = await findBestTradingPair();
+        if (!tradeData) return;
 
-    if (openPositions.length >= RISK_CONFIG.maxPositions) {
-      console.log('\n🔍 Max Positions Reached - Current PnLs:');
-      console.log('----------------------------------------');
-      openPositions.forEach(position => {
-          const pnlPercentage = ((position.markPrice - position.entryPrice) / position.entryPrice) * 100 * position.leverage;
-          console.log(`${position.symbol}: ${pnlPercentage >= 0 ? '✅' : '❌'} ${pnlPercentage.toFixed(2)}% | Entry: ${position.entryPrice} | Current: ${position.markPrice} | ${position.leverage}x`);
-      });
-      console.log('----------------------------------------');
-      console.log(`⚠️ At max positions (${openPositions.length}/${RISK_CONFIG.maxPositions}), skipping analysis\n`);
-      return;
+        const { bestPair, bestCandles, bestScore } = tradeData;
+        console.log(`✅ 👉 Best Pair: ${bestPair} (Score: ${bestScore})`);
+
+        const tradeAmount = await getTradeAmount();
+        if (tradeAmount === 0) return;
+
+        // One final position check before trade
+        const currentPositions = await getOpenPositions();
+        if (currentPositions.length >= RISK_CONFIG.maxPositions) {
+          console.log(`⚠️ Max positions reached during analysis, skipping trade`);
+          return;
+        }
+
+        if (bestScore > 8) {  // For longs: score must be HIGHER than 7
+          console.log("🚀 Strong LONG signal detected");
+          await executeTrade(bestPair, "buy", tradeAmount, bestScore);
+          tradeStats.successful++;
+          tradeStats.totalProfit += bestScore;
+        } else if (bestScore < -8) {  // For shorts: score must be LOWER than -7
+          console.log("🚀 Strong SHORT signal detected");
+          await executeTrade(bestPair, "sell", tradeAmount, bestScore);
+          tradeStats.failed++;
+          tradeStats.totalProfit -= bestScore;
+        }
+      }
+    } catch (err) {
+      console.error("❌ Error in trading loop:", err);
     }
-
-    const tradeData = await findBestTradingPair();
-    if (!tradeData) return;
-
-    const { bestPair, bestCandles, bestScore } = tradeData;
-    console.log(`✅ 👉 Best Pair: ${bestPair} (Score: ${bestScore})`);
-
-    const tradeAmount = await getTradeAmount();
-    if (tradeAmount === 0) return;
-
-    // Double check positions again before executing trade
-    const currentPositions = await getOpenPositions();
-    if (currentPositions.length >= RISK_CONFIG.maxPositions) {
-      console.log(`⚠️ Max positions reached during analysis, skipping trade`);
-      return;
-    }
-
-    if (bestScore > 2) {
-      console.log("🚀 Strong LONG signal detected");
-      await executeTrade(bestPair, "buy", tradeAmount, bestScore);
-      tradeStats.successful++;
-      tradeStats.totalProfit += bestScore;
-    } else if (bestScore < -2) {
-      console.log("🚀 Strong SHORT signal detected");
-      await executeTrade(bestPair, "sell", tradeAmount, bestScore);
-      tradeStats.failed++;
-      tradeStats.totalProfit -= bestScore;
-    } else {
-      console.log("⚠️ No strong signals detected");
-    }
-  }, 60000);
+  }, 30000); // Run every 30 seconds instead
 
   process.on('unhandledRejection', (err) => {
     console.error('Unhandled rejection:', err);

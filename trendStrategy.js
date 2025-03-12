@@ -119,10 +119,16 @@ function calculateTechnicalScore(indicators) {
   }
 
   // RSI Score
-  if (indicators.rsi > 35 && indicators.rsi < 75) {
+  if (indicators.rsi >= 70) {
+    score -= 2;
+    reasons.push("Overbought RSI -2");
+  } else if (indicators.rsi <= 30) {
+    score += 2;
+    reasons.push("Oversold RSI +2");
+  } else if (indicators.rsi > 50) {
     score += 1;
-    reasons.push("Healthy RSI +1");
-  } else if (indicators.rsi < 60) {
+    reasons.push("Bullish RSI +1");
+  } else {
     score -= 1;
     reasons.push("Bearish RSI -1");
   }

@@ -286,18 +286,6 @@ async function findBestTradingPair() {
               reasoning.push("❌ Low spread weakens SHORT (-1)");
             }
           }
-
-          // Volume bonus
-          if (volume > 40_000) {
-            if (score > 0) {
-              score += 2;
-              reasoning.push("High volume bonus for LONG +2");
-            } else if (score < 0) {
-              score -= 2;
-              reasoning.push("High volume penalty for SHORT -2");
-            }
-          }
-
           // Get S/R levels
           const srLevels = await getSupportResistanceLevels(pair, "4h");
           
@@ -428,12 +416,12 @@ async function startTrading() {
         return;
       }
 
-      if (bestScore > 8) {  // For longs: score must be HIGHER than 7
+      if (bestScore > 10) {  // For longs: score must be HIGHER than 10
         console.log("🚀 Strong LONG signal detected");
         await executeTrade(bestPair, "buy", tradeAmount, bestScore);
         tradeStats.successful++;
         tradeStats.totalProfit += bestScore;
-      } else if (bestScore < -8) {  // For shorts: score must be LOWER than -7
+      } else if (bestScore < -10) {  // For shorts: score must be LOWER than -10
         console.log("🚀 Strong SHORT signal detected");
         await executeTrade(bestPair, "sell", tradeAmount, bestScore);
         tradeStats.failed++;

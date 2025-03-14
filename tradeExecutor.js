@@ -15,9 +15,9 @@ const RISK_CONFIG = {
   maxPositions: 4,
   maxTradesPerPair: 1,
   defaultLeverage: 3,
-  tradeAmountUSDT: 20,
-  takeProfitPct: 5,
-  stopLossPct: -20
+  tradeAmountUSDT: 10,
+  takeProfitPct: 6,
+  stopLossPct: -15
 };
 
 // Track trade history

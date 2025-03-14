@@ -40,9 +40,12 @@ function detectSupportResistance(candles) {
 
   function filterLevels(prices) {
     return Array.from(prices)
-      .filter(([price, count]) => count >= 3)  // Min 3 touches
-      .map(([price]) => price)
-      .sort((a, b) => a - b);
+      .filter(([price, count]) => count >= 3)
+      .map(([price, count]) => ({ 
+        price,
+        strength: Math.min(count / 2, 5)  // Normalize et, maksimum 5 olsun
+      }))
+      .sort((a, b) => a.price - b.price);
   }
 
   const allPrices = Array.from(levels.entries());
@@ -64,7 +67,36 @@ async function getSupportResistanceLevels(symbol, timeframe = "1h") {
   return detectSupportResistance(candles);
 }
 
-// Export for use in trading bot
+function clusterLevels(levels, threshold = 0.005) {
+  const clusters = [];
+  const sorted = [...levels].sort((a, b) => a - b);
+  
+  if (sorted.length === 0) return [];
+  
+  let currentCluster = [sorted[0]];
+  
+  for (let i = 1; i < sorted.length; i++) {
+    const lastPrice = currentCluster[currentCluster.length - 1];
+    const percentDiff = Math.abs(sorted[i] - lastPrice) / lastPrice;
+    
+    if (percentDiff <= threshold) {
+      currentCluster.push(sorted[i]);
+    } else {
+      clusters.push(currentCluster);
+      currentCluster = [sorted[i]];
+    }
+  }
+  
+  if (currentCluster.length > 0) {
+    clusters.push(currentCluster);
+  }
+  
+  return clusters.map(cluster => {
+    const avg = cluster.reduce((sum, price) => sum + price, 0) / cluster.length;
+    return Math.round(avg * 100) / 100;
+  });
+}
+
 module.exports = {
   getSupportResistanceLevels
 };

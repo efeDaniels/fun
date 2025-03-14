@@ -12,7 +12,7 @@ const exchangeInstance = new ccxt.bybit({
 
 // Bot Risk Management Parameters
 const RISK_CONFIG = {
-  maxPositions: 4,
+  maxPositions: 8,
   maxTradesPerPair: 1,
   defaultLeverage: 3,
   tradeAmountUSDT: 10,
@@ -76,29 +76,41 @@ async function monitorPositions() {
     const positions = await exchangeInstance.fetchPositions();
     const openPositions = positions.filter(pos => parseFloat(pos.contracts) > 0);
 
-    // If no open positions, skip monitoring
-    if (openPositions.length === 0) {
-      return;
-    }
+    if (openPositions.length === 0) return;
 
-    console.log("\n🔍 Monitoring Active Positions:");
-    console.log('----------------------------------------');
-    openPositions.forEach(position => {
-      const entryPrice = parseFloat(position.entryPrice);
-      const markPrice = parseFloat(position.markPrice);
-      const leverage = parseFloat(position.leverage);
-      const pnlPercentage = ((markPrice - entryPrice) / entryPrice) * 100 * leverage;
-      
-      console.log(`${position.symbol}: ${pnlPercentage >= 0 ? '✅' : '❌'} ${pnlPercentage.toFixed(2)}% | Entry: ${position.entryPrice} | Current: ${position.markPrice} | ${position.leverage}x`);
-    });
-    console.log('----------------------------------------');
+    console.log(`
+╭─────────── 🔍 Monitoring Active Positions ───────────╮
+${openPositions.map(position => {
+  const currentPrice = position.markPrice || position.lastPrice || position.entryPrice;
+  const leverage = parseFloat(position.leverage);
+  
+  // Use the correct field from Bybit API response
+  const isLong = position.info.side === 'Buy';
+  
+  const pnlPercent = isLong
+    ? ((currentPrice - position.entryPrice) / position.entryPrice * 100 * leverage)
+    : ((position.entryPrice - currentPrice) / position.entryPrice * 100 * leverage);
+
+  const positionType = isLong ? '📈 LONG' : '📉 SHORT';
+  const emoji = pnlPercent > 0 ? '✅' : '❌';
+  
+  return `│ ${position.symbol}: ${emoji} ${pnlPercent.toFixed(2)}% | ${positionType}
+│ Entry: ${position.entryPrice.toFixed(4)} | Current: ${currentPrice.toFixed(4)} | ${leverage}x
+├───────────────────────────────────────────────────────`
+}).join('\n')}
+╰─────────────────────────────────────────────────────╯
+`);
 
     // Rest of monitoring logic...
     for (const position of openPositions) {
       const entryPrice = parseFloat(position.entryPrice);
       const markPrice = parseFloat(position.markPrice);
       const leverage = parseFloat(position.leverage);
-      const pnlPercentage = ((markPrice - entryPrice) / entryPrice) * 100 * leverage;
+      
+      // Use the same PNL calculation as monitoring
+      const pnlPercentage = position.info.side === 'Buy'
+        ? ((markPrice - entryPrice) / entryPrice * 100 * leverage)
+        : ((entryPrice - markPrice) / entryPrice * 100 * leverage);
 
       if (pnlPercentage >= RISK_CONFIG.takeProfitPct || pnlPercentage <= RISK_CONFIG.stopLossPct) {
         console.log(

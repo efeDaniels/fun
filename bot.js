@@ -7,6 +7,8 @@ const {
   RISK_CONFIG,
 } = require("./tradeExecutor");
 const { getSupportResistanceLevels } = require("./support_resistance");
+const fs = require('fs');
+const path = require('path');
 require("dotenv").config();
 
 // Exchange setup with rate limiting
@@ -75,11 +77,31 @@ const BLACKLISTED_PAIRS = [
 ];
 
 // Add at the top with other constants
-const tradeStats = {
-  successful: 0,
-  failed: 0,
-  totalProfit: 0,
-};
+const STATS_FILE = path.join(__dirname, 'trade_stats.json');
+
+// Load existing stats on startup
+const tradeStats = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+  } catch (err) {
+    // Return default stats if file doesn't exist
+    return {
+      successful: 0,
+      failed: 0,
+      totalProfit: 0,
+      closedTrades: []
+    };
+  }
+})();
+
+// Function to save stats
+function saveStats() {
+  try {
+    fs.writeFileSync(STATS_FILE, JSON.stringify(tradeStats, null, 2));
+  } catch (err) {
+    console.error('❌ Error saving trade stats:', err);
+  }
+}
 
 /**
  * Check if the number of open positions is at the threshold
@@ -525,6 +547,9 @@ async function startTrading() {
         tradeStats.failed++;
         tradeStats.totalProfit -= bestScore;
       }
+
+      // Save after updating stats
+      saveStats();
     } catch (err) {
       console.error("❌ Error in trading loop:", err);
     }
@@ -540,17 +565,30 @@ async function startTrading() {
 
   // Fixed performance logging
   setInterval(() => {
+    const totalTrades = tradeStats.successful + tradeStats.failed;
+    const winRate = totalTrades > 0 ? (tradeStats.successful / totalTrades * 100) : 0;
+    
+    // Get last 24h performance
+    const last24h = tradeStats.closedTrades.filter(t => 
+      t.timestamp > Date.now() - 24 * 60 * 60 * 1000
+    );
+    const profit24h = last24h.reduce((sum, t) => sum + t.profit, 0);
+
     console.log(`
-      📊 Performance Report:
-      Successful Trades: ${tradeStats.successful}
-      Failed Trades: ${tradeStats.failed}
-      Win Rate: ${(
-        (tradeStats.successful / (tradeStats.successful + tradeStats.failed) ||
-          0) * 100
-      ).toFixed(2)}%
-      Total Profit: $${tradeStats.totalProfit.toFixed(2)}
+╭─────────── 📊 Performance Report ───────────╮
+│ Total Trades: ${totalTrades}
+│ Successful: ${tradeStats.successful}
+│ Failed: ${tradeStats.failed}
+│ Win Rate: ${winRate.toFixed(2)}%
+│ Total Profit: $${tradeStats.totalProfit.toFixed(2)}
+│ 24h Profit: $${profit24h.toFixed(2)}
+│ Last Trade: ${tradeStats.closedTrades[tradeStats.closedTrades.length - 1]?.symbol || 'None'}
+╰───────────────────────────────────────────╯
     `);
-  }, 3600000);
+  }, 3600000); // Every hour
+
+  // Also save periodically as backup
+  setInterval(saveStats, 300000); // Every 5 minutes
 }
 
 startTrading();

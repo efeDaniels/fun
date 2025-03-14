@@ -1,9 +1,0 @@
-Timestamp      ,Pair           ,Type           ,Side           ,Entry_Price    ,Exit_Price     ,Contracts      ,Leverage       ,PnL_USDT       ,PnL_%          ,Score          ,Reason         ,Duration_Hours ,Market_Volume  ,Volatility_24h ,Market_Trend   ,Funding_Rate   ,Open_Interest  ,Liquidations_24h,Risk_Reward    ,Max_Drawdown   ,Profit_Factor  ,Sharpe_Ratio   ,Market_Cap     ,BTC_Dominance  ,Key_Indicators 
-2025-03-12T21:02:59.018Z,ARB/USDT:USDT,EXIT,long,0.3424,0.3484,175.2000,3,5.2570,5.26,,Take Profit at 5.26%,7.79,,,,,,,NaN,1.75,NaN,16.20,,,{}
-2025-03-12T21:03:33.279Z,BNB/USDT:USDT,ENTRY,buy,,,0.1051,3,,,9.07,,,,,,,,,,,,,,,{}
-2025-03-12T21:14:38.238Z,SOL/USDT:USDT,EXIT,short,124.4700,126.5500,0.4000,3,5.0133,5.01,,Take Profit at 5.01%,7.07,,,,,,,NaN,1.67,NaN,17.02,,,{}
-2025-03-12T21:15:27.925Z,SOL/USDT:USDT,ENTRY,buy,,,0.4728,3,,,10.00,,,,,,,,,,,,,,,{}
-2025-03-12T21:16:18.183Z,OP/USDT:USDT,EXIT,long,0.8541,0.8688,70.2000,3,5.1638,5.16,,Take Profit at 5.16%,7.12,,,,,,,NaN,1.72,NaN,17.42,,,{}
-2025-03-12T21:17:27.533Z,ARB/USDT:USDT,ENTRY,buy,,,171.5756,3,,,8.23,,,,,,,,,,,,,,,{}
-2025-03-12T22:41:18.208Z,ETH/USDT:USDT,EXIT,long,1881.4600,1914.1700,0.0300,3,5.2156,5.22,,Take Profit at 5.22%,6.43,,,,,,,NaN,1.74,NaN,19.45,,,{}
-2025-03-12T22:41:27.868Z,AVAX/USDT:USDT,ENTRY,buy,,,3.1895,3,,,8.30,,,,,,,,,,,,,,,{}

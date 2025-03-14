@@ -1,3 +1,0 @@
-Timestamp      ,Pair           ,Type           ,Side           ,Entry_Price    ,Exit_Price     ,Contracts      ,Leverage       ,PnL_USDT       ,PnL_%          ,Score          ,Reason         ,Duration_Hours ,Market_Volume  ,Volatility_24h ,Market_Trend   ,Funding_Rate   ,Open_Interest  ,Liquidations_24h,Risk_Reward    ,Max_Drawdown   ,Profit_Factor  ,Sharpe_Ratio   ,Market_Cap     ,BTC_Dominance  ,Key_Indicators 
-2025-03-14T19:50:07.166Z,LINK/USDT:USDT,EXIT,short,14.5250,14.1250,2.0000,3,8.2616,8.26,,Take Profit at 8.26%,4.16,,,,,,,,,,,,,
-2025-03-14T19:50:45.680Z,ATOM/USDT:USDT,ENTRY,sell,,,7.1599,3,,,-11.00,,,,,,,,,,,,,,,{}

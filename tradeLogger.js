@@ -34,17 +34,13 @@ class TradeLogger {
             {id: 'pnlPercent', title: 'PnL_%'},
             {id: 'exitReason', title: 'Exit_Reason'},
             {id: 'duration', title: 'Duration_Hours'}
-        ].map(header => ({
-            ...header,
-            // Ensure proper CSV formatting
-            title: header.title.padEnd(15, ' ')
-        }));
+        ];
 
         // Create/append to historical file
         this.historicalWriter = createCsvWriter({
             path: this.historicalPath,
             header: headers,
-            append: true // Append to existing file
+            append: fs.existsSync(this.historicalPath) // Only append if file exists
         });
 
         // Create new daily file
@@ -61,36 +57,40 @@ class TradeLogger {
 
     async logTrade(tradeData) {
         try {
-            // Write to both historical and daily files
             await Promise.all([
                 this.historicalWriter.writeRecords([tradeData]),
                 this.dailyWriter.writeRecords([tradeData])
             ]);
 
-            console.log(`📝 Trade logged successfully: ${tradeData.pair} ${tradeData.side.toUpperCase()} | PnL: ${tradeData.pnlPercent}%`);
+            console.log(`
+╭─────────── 📝 Trade Logged ───────────╮
+│ ${tradeData.pair}
+│ ${tradeData.side.toUpperCase()} Position Closed
+│ Entry: ${tradeData.entryPrice} → Exit: ${tradeData.exitPrice}
+│ PnL: ${tradeData.pnlPercent}% (${tradeData.pnl} USDT)
+│ Duration: ${tradeData.duration}h
+╰───────────────────────────────────────╯`);
         } catch (err) {
             console.error('❌ Error logging trade:', err);
         }
     }
 
     async logTradeExit(tradeData) {
-        // Fix duration calculation - convert entry time to proper Date object
         const entryTime = new Date(tradeData.entryTime);
         const duration = tradeData.entryTime ? 
             ((new Date() - entryTime) / (1000 * 60 * 60)).toFixed(2) : '';
 
-        // Clean up the entry object
         const entry = {
             timestamp: new Date().toISOString(),
             pair: tradeData.pair,
             side: tradeData.side,
-            entryPrice: tradeData.entryPrice?.toFixed(4) || '',
-            exitPrice: tradeData.exitPrice?.toFixed(4) || '',
-            amount: tradeData.amount?.toFixed(4) || '',
-            leverage: tradeData.leverage || '',
-            pnl: tradeData.pnl?.toFixed(4) || '',
-            pnlPercent: tradeData.pnlPercent?.toFixed(2) || '',
-            exitReason: tradeData.exitReason || '',
+            entryPrice: tradeData.entryPrice?.toFixed(4),
+            exitPrice: tradeData.exitPrice?.toFixed(4),
+            amount: tradeData.amount?.toFixed(4),
+            leverage: tradeData.leverage,
+            pnl: tradeData.pnl?.toFixed(4),
+            pnlPercent: tradeData.pnlPercent?.toFixed(2),
+            exitReason: tradeData.exitReason,
             duration
         };
 
